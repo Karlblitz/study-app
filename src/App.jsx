@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import questionSets from "./questions.js";
 import { extractLectureText } from "./contentExtraction.js";
 import { generateQuestionsFromText } from "./quizGenerator.js";
+import { createLocalAccount, signInLocalAccount } from "./auth.js";
+import { Eye, EyeOff } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 const seedLectures = [
   { id: "l1", subject: "Microbiology", title: "Antimicrobial Susceptibility Testing", description: "Disk diffusion, MIC, and interpretation of susceptibility results.", studied: true, dateAdded: "2026-09-23", fileName: "", fileType: "", fileData: "", questions: questionSets["Antimicrobial Susceptibility Testing"] },
@@ -29,6 +33,7 @@ function getLectureQuestions(lecture) {
 }
 
 function App() {
+  const [theme, setTheme] = useState(() => readStore("studyspace-theme", "light"));
   const [profile, setProfile] = useState(() => readStore("studyspace-profile", null));
   const [authChoice, setAuthChoice] = useState(null);
   const [page, setPage] = useState("home");
@@ -43,6 +48,7 @@ function App() {
   const [generatingLectureId, setGeneratingLectureId] = useState(null);
   const googleButton = useRef(null);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  useEffect(() => { localStorage.setItem("studyspace-theme", JSON.stringify(theme)); }, [theme]);
   useEffect(() => { localStorage.setItem("studyspace-lectures", JSON.stringify(lectures)); }, [lectures]);
   useEffect(() => { localStorage.setItem("studyspace-sessions", JSON.stringify(sessions)); }, [sessions]);
   useEffect(() => { localStorage.setItem("studyspace-attempts", JSON.stringify(attempts)); }, [attempts]);
@@ -57,7 +63,7 @@ function App() {
             const encoded = credential.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
             const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
             const payload = JSON.parse(new TextDecoder().decode(bytes));
-            login(payload.name || "Student", payload.email || "", "google");
+            googleLogin(payload.name || "Student", payload.email || "");
           } catch { notify("Google sign-in could not read the account response"); }
         },
       });
@@ -127,7 +133,15 @@ function App() {
     setQuizState({ questions, index: 0, answers: [], done: false }); setPage("quizRun");
   }
   function customizeQuiz(lecture) { setSelectedLecture(lecture); setQuizState(null); setPage("quizSetup"); }
-  function login(name, email, source = "local") { setAuthChoice({ name, email, source }); }
+  async function login(credentials) {
+    try {
+      const account = credentials.mode === "signup"
+        ? await createLocalAccount(credentials)
+        : await signInLocalAccount(credentials);
+      setAuthChoice(account); return "";
+    } catch (error) { return error.message || "Could not sign in. Please try again."; }
+  }
+  function googleLogin(name, email) { setAuthChoice({ name, email, source: "google" }); }
   function finishLogin(staySignedIn) {
     if (!authChoice) return;
     if (staySignedIn) localStorage.setItem("studyspace-profile", JSON.stringify(authChoice));
@@ -149,7 +163,7 @@ function App() {
   function openLecture(lecture) { setSelectedLecture(lecture); setPage("viewer"); }
   function addToSchedule(lecture) { setPage("schedule"); setSelectedLecture(lecture); }
 
-  return <div className="app-shell">
+  return <div className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`}>
     <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
       <div className="brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div>
       <div className="nav-label">WORKSPACE</div>
@@ -158,7 +172,7 @@ function App() {
     </aside>
     {mobileNav && <button className="nav-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} />}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><div className="breadcrumbs">Workspace <span>/</span> <strong>{pageTitle}</strong></div><div className="top-actions"><span className="date-chip">◷ &nbsp;{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span><div className="top-avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><div className="breadcrumbs">Workspace <span>/</span> <strong>{pageTitle}</strong></div><div className="top-actions"><label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label><span className="date-chip">◷ &nbsp;{new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span><div className="top-avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div></div></header>
       <div className="content">
         {page === "home" && <Dashboard lectures={lectures} sessions={sessions} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
         {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={startQuiz} onAdd={saveLecture} />}
@@ -196,12 +210,30 @@ function LoginScreen({ googleClientId, googleButton, authChoice, onLogin, onFini
   const [mode, setMode] = useState("signup");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  async function submitCredentials(event) {
+    event.preventDefault(); setError("");
+    if (mode === "signup" && password !== confirmPassword) { setError("The passwords do not match."); return; }
+    if (mode === "signup" && password.length < 8) { setError("Use at least 8 characters for your password."); return; }
+    setSubmitting(true);
+    const message = await onLogin({ mode, name, email, password });
+    setSubmitting(false); setError(message || "");
+  }
+  function switchMode() { setMode(mode === "signup" ? "login" : "signup"); setPassword(""); setConfirmPassword(""); setError(""); }
   if (authChoice) return <div className="auth-overlay"><section className="auth-card stay-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">SIGN-IN PREFERENCE</p><h1>Stay signed in?</h1><p className="auth-intro">Keep your Studyspace profile signed in on this device, {authChoice.name}. You can sign out anytime from the profile menu.</p><button className="button primary auth-submit" onClick={() => onFinish(true)}>Yes, stay signed in</button><button className="button secondary auth-submit" onClick={() => onFinish(false)}>No, just for this session</button><p className="auth-local-note">If you choose session only, refreshing or closing this browser will sign you out.</p></section></div>;
-  return <div className="auth-overlay"><section className="auth-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">YOUR PERSONAL STUDY SPACE</p><h1>{mode === "signup" ? "Make room to grow." : "Welcome back."}</h1><p className="auth-intro">{mode === "signup" ? "Create a profile to keep your lectures, schedule, and progress together on this device." : "Sign in to continue to your study space on this device."}</p><form className="auth-form" onSubmit={(event) => { event.preventDefault(); onLogin(name.trim() || email.split("@")[0], email.trim()); }}>
+  return <div className="auth-overlay"><section className="auth-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">YOUR PERSONAL STUDY SPACE</p><h1>{mode === "signup" ? "Make room to grow." : "Welcome back."}</h1><p className="auth-intro">{mode === "signup" ? "Create a profile to keep your lectures, schedule, and progress together on this device." : "Sign in to continue to your study space on this device."}</p><form className="auth-form" onSubmit={submitCredentials}>
     {mode === "signup" && <label>Your name<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Alex Student" /></label>}
     <label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>
-    <button className="button primary auth-submit">{mode === "signup" ? "Create local profile" : "Continue"}</button>
-  </form><div className="auth-divider"><span>or</span></div>{googleClientId ? <div ref={googleButton} className="google-button-slot" /> : <button className="google-placeholder" type="button" disabled><span className="google-g">G</span> Continue with Google <small>Set a Google client ID to enable</small></button>}<p className="auth-switch">{mode === "signup" ? "Already have a profile on this device?" : "New to Studyspace?"} <button onClick={() => setMode(mode === "signup" ? "login" : "signup")}>{mode === "signup" ? "Sign in" : "Create profile"}</button></p><p className="auth-local-note">This first version keeps profile and study data in this browser. The email form is a local profile, not password-protected authentication.</p></section></div>;
+    <label>Password<span className="password-field"><input required type={showPassword ? "text" : "password"} minLength="8" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 8 characters" : "Enter your password"} /><button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((shown) => !shown)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>
+    {mode === "signup" && <label>Confirm password<span className="password-field"><input required type={showConfirmPassword ? "text" : "password"} minLength="8" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Enter your password again" /><button type="button" className="password-toggle" aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"} aria-pressed={showConfirmPassword} onClick={() => setShowConfirmPassword((shown) => !shown)}>{showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>}
+    {error && <p className="auth-error" role="alert">{error}</p>}
+    <button className="button primary auth-submit" disabled={submitting}>{submitting ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}</button>
+  </form><div className="auth-divider"><span>or</span></div>{googleClientId ? <div ref={googleButton} className="google-button-slot" /> : <button className="google-placeholder" type="button" disabled><span className="google-g">G</span> Continue with Google <small>Set a Google client ID to enable</small></button>}<p className="auth-switch">{mode === "signup" ? "Already have an account?" : "New to Studyspace?"} <button type="button" onClick={switchMode}>{mode === "signup" ? "Log in" : "Sign up"}</button></p><p className="auth-local-note">Passwords are salted and hashed in this browser. This local demo is not server-backed authentication and does not sync between devices.</p></section></div>;
 }
 
 function QuizSetup({ lecture, onSave, onBack }) {

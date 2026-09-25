@@ -1,6 +1,6 @@
 # Sign-in setup
 
-The app keeps accounts and study data in the browser for this beginner version. The email form creates a local profile and does not provide password-based or secure multi-device authentication.
+Sign-up asks for a name, email, password, and password confirmation. Log in checks the saved local account. Passwords are salted and hashed with the browser Web Crypto API; the plain password is not saved. Accounts and study data stay in localStorage on this device. This is still a local demo, not secure server-backed authentication, and it does not sync data between devices.
 
 After sign-in, choose **Yes, stay signed in** to remember the profile on this device, or **No, just for this session** to sign out when the browser is refreshed or closed.
 

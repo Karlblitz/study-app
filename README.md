@@ -46,9 +46,9 @@ npm.cmd run build
 
 ## Sign-in and data storage
 
-The email form creates a profile in the browser; it is not password-protected authentication. **Yes, stay signed in** saves the profile to localStorage. **No, just for this session** keeps the profile only until the page is refreshed or closed.
+Sign-up uses a name, email, and password; login checks that local account. Passwords are salted and hashed with the browser Web Crypto API instead of being stored as plain text. **Yes, stay signed in** saves the profile to localStorage. **No, just for this session** keeps the profile only until the page is refreshed or closed.
 
-Study data is stored in localStorage and remains in that browser on this device. Signing out does not delete lectures or progress. Clearing browser site data removes the saved app data. This version does not sync between devices or provide separate secure accounts.
+Study data and local account records are stored in localStorage and remain in that browser on this device. Signing out does not delete lectures or progress. Clearing browser site data removes the saved app data. This version does not sync between devices or provide server-backed account security; browser-local login is suitable for a prototype, not sensitive data.
 
 Google sign-in requires a Google OAuth Web client ID. Follow [LOGIN_SETUP.md](./LOGIN_SETUP.md) to configure it. Do not place a Google client secret in this frontend app. Production authentication requires a backend to verify Google credentials.
 
