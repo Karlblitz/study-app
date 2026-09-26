@@ -1,27 +1,17 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import questionSets from "./questions.js";
 import { extractLectureText } from "./contentExtraction.js";
 import { generateQuestionsFromText } from "./quizGenerator.js";
 import { createLocalAccount, signInLocalAccount } from "./auth.js";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, FileText, FileVideo, X } from "lucide-react";
 import { CalendarDays, Moon, Sun } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
-import {
-  Questionnaire,
-  QuestionnaireActions,
-  QuestionnaireChoice,
-  QuestionnaireChoices,
-  QuestionnaireError,
-  QuestionnaireItem,
-  QuestionnaireNext,
-  QuestionnairePrevious,
-  QuestionnaireProgress,
-  QuestionnaireSubmit,
-  QuestionnaireTitle,
-} from "@/components/ui/questionnaire";
-
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
+import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 const seedLectures = [
   { id: "l1", subject: "Microbiology", title: "Antimicrobial Susceptibility Testing", description: "Disk diffusion, MIC, and interpretation of susceptibility results.", studied: true, dateAdded: "2026-09-23", fileName: "", fileType: "", fileData: "", questions: questionSets["Antimicrobial Susceptibility Testing"] },
   { id: "l2", subject: "Clinical Chemistry", title: "Liver Function Tests", description: "Markers of liver injury, cholestasis, and synthetic function.", studied: true, dateAdded: "2026-09-22", fileName: "", fileType: "", fileData: "", questions: questionSets["Liver Function Tests"] },
@@ -40,10 +30,12 @@ const readStore = (key, fallback) => { try { const value = localStorage.getItem(
 const fmtDate = (date, options = { month: "long", day: "numeric", year: "numeric" }) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options);
 const fmtTime = (time) => { if (!time) return ""; const [h, m] = time.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
 const percent = (num, den) => den ? Math.round((num / den) * 100) : 0;
+const answerMatches = (question, answer) => Array.isArray(question.correctAnswer)
+  ? Array.isArray(answer) && question.correctAnswer.length === answer.length && question.correctAnswer.every((item) => answer.includes(item))
+  : question.correctAnswer === answer;
+const answerText = (answer) => Array.isArray(answer) ? answer.join(", ") : answer || "No answer";
 function getLectureQuestions(lecture) {
-  if ((lecture.quizSource === "custom" || lecture.quizSource === "generated") && lecture.questions?.length) return lecture.questions;
-  if (questionSets[lecture.title]) return questionSets[lecture.title];
-  if (/\b(conic|conics|ellipse|ellipses|hyperbola|hyperbolas|parabola|parabolas)\b/i.test(lecture.title)) return questionSets["Equations of Conic- Quarter 1_Module 5"];
+  if (lecture.questions?.length) return lecture.questions;
   return [];
 }
 
@@ -117,10 +109,19 @@ function App() {
   const studied = lectures.filter((lecture) => lecture.studied).length;
   const completion = percent(studied, lectures.length);
   const matchingLectures = useMemo(() => lectures.filter((lecture) => `${lecture.title} ${lecture.subject} ${lecture.description}`.toLowerCase().includes(search.toLowerCase())), [lectures, search]);
-  const pageTitle = navItems.find(([id]) => id === page)?.[2] || "My Lectures";
+  const pageTitle = page === "viewer"
+    ? selectedLecture?.title || "My Lectures"
+    : page === "quizRun" || page === "quizSetup" || page === "quizOptions" || page === "quizReview"
+      ? selectedLecture?.title || "Quiz"
+      : navItems.find(([id]) => id === page)?.[2] || "My Lectures";
+  const breadcrumbParent = page === "viewer" ? "My Lectures" : page.startsWith("quiz") ? "Quizzes" : "Workspace";
 
   function notify(message) { setToast(message); window.setTimeout(() => setToast(""), 2400); }
   function go(next) { setPage(next); setSelectedLecture(null); setQuizState(null); setMobileNav(false); }
+  function navigate(next) {
+    if (page === "quizRun" && quizState && !quizState.done && !window.confirm("Leave this quiz? Your current answers will be lost.")) return;
+    go(next);
+  }
   function toggleStudied(id) { setLectures((items) => items.map((item) => item.id === id ? { ...item, studied: !item.studied } : item)); }
   function saveLecture(form) {
     setLectures((items) => [{ ...form, id: crypto.randomUUID(), studied: false, dateAdded: today(), questions: [], quizSource: "none" }, ...items]);
@@ -130,10 +131,10 @@ function App() {
     setSessions((items) => [{ ...form, id: crypto.randomUUID(), completed: false }, ...items]);
     notify("Study session scheduled");
   }
-  async function startQuiz(lecture) {
+  async function startQuiz(lecture, settings = { difficulty: "Medium", count: 5, type: "Multiple choice" }, excludedIds = []) {
     let qs = getLectureQuestions(lecture);
     setSelectedLecture(lecture);
-    if (qs.length < 10) {
+    if (!qs.length) {
       setGeneratingLectureId(lecture.id);
       try {
         let material = lecture.lectureContent || "";
@@ -145,9 +146,9 @@ function App() {
         const updated = { ...lecture, lectureContent: material.slice(0, 90000), questions: qs, quizSource: "generated" };
         setLectures((items) => items.map((item) => item.id === lecture.id ? updated : item));
         setSelectedLecture(updated);
-        if (qs.length < 10) {
+        if (!qs.length) {
           setQuizState(null); setPage("quizSetup");
-          notify(qs.length ? `Found ${qs.length} usable questions. Add a few to reach 10.` : "I couldn't find enough readable lecture text to build 10 questions. Add notes or a transcript.");
+          notify("I couldn't find enough clear definitions to build grounded questions. Add fuller notes or create questions manually.");
           return;
         }
       } catch (error) {
@@ -156,15 +157,54 @@ function App() {
         return;
       } finally { setGeneratingLectureId(null); }
     }
-    setQuizState({ questions: qs, index: 0, answers: [], done: false }); setPage("quizRun");
+    let pool = qs.map((question, index) => ({
+      ...question,
+      id: question.id || `${lecture.id}-${index}`,
+      topic: question.topic || lecture.title,
+      difficulty: settings.difficulty,
+      type: settings.type,
+      correctAnswer: question.correctAnswer ?? question.answer,
+      hint: question.hint || `Recall the key definition or relationship from ${lecture.title}. Compare the choices before deciding.`,
+      explanation: question.explanation || `The lecture question’s correct answer is “${question.correctAnswer ?? question.answer}.” Review this idea in ${lecture.title}.`,
+    }));
+    const adaptQuestion = (question, mode) => {
+      if (mode === "True / False") {
+      const wrongOptions = (question.options || []).filter((option) => option !== question.correctAnswer);
+      const truth = Math.random() >= 0.5 || !wrongOptions.length;
+      const proposed = truth ? question.correctAnswer : wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+      return { ...question, type: mode, question: `True or False? “${proposed}” correctly answers: ${question.question}`, options: ["True", "False"], correctAnswer: truth ? "True" : "False", explanation: `For “${question.question}”, the lecture’s correct answer is “${question.correctAnswer}”.` };
+      }
+      if (mode === "Multi-select") {
+        const correctAnswer = (question.options || []).filter((option) => option !== question.correctAnswer);
+        return { ...question, type: mode, question: `Select every option that does NOT correctly answer: ${question.question}`, correctAnswer, explanation: `Only “${question.correctAnswer}” answers the lecture question correctly. The remaining choices are distractors.` };
+      }
+      if (mode === "Problem solving") return { ...question, type: mode, question: `Apply the lecture concept to this problem: ${question.question}` };
+      return { ...question, type: "Multiple choice" };
+    };
+    pool = pool.map((question) => {
+      const mode = settings.type === "Mixed"
+        ? ["Multiple choice", "True / False", "Multi-select", "Problem solving"][Math.floor(Math.random() * 4)]
+        : settings.type;
+      return adaptQuestion(question, mode);
+    });
+    const unseen = pool.filter((question) => !excludedIds.includes(question.id));
+    if (excludedIds.length && !unseen.length) { notify("You’ve practiced every unique question for this lecture. Add more questions or notes for a fresh quiz."); return; }
+    const shuffled = [...(excludedIds.length ? unseen : pool)].sort(() => Math.random() - 0.5);
+    const selected = shuffled.slice(0, settings.count).map((question) => ({ ...question, options: [...(question.options || [])].sort(() => Math.random() - 0.5) }));
+    setQuizState({ questions: selected, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config: settings, startedAt: Date.now(), pastQuestionIds: [...new Set([...excludedIds, ...selected.map((question) => question.id)])] });
+    setPage("quizRun");
+    if (selected.length < settings.count) notify(`This lecture has ${selected.length} grounded question${selected.length === 1 ? "" : "s"}; the quiz will use all of them.`);
   }
   function saveCustomQuestions(questions) {
     const updated = { ...selectedLecture, questions, quizSource: "custom" };
     setLectures((items) => items.map((item) => item.id === updated.id ? updated : item));
     setSelectedLecture(updated);
-    setQuizState({ questions, index: 0, answers: [], done: false }); setPage("quizRun");
+    const prepared = questions.map((question, index) => ({ ...question, id: question.id || `${updated.id}-custom-${index}`, topic: updated.title, correctAnswer: question.correctAnswer ?? question.answer, difficulty: "Medium", type: "Multiple choice", hint: question.hint || `Recall the main idea from ${updated.title}.`, explanation: question.explanation || `The correct answer is “${question.correctAnswer ?? question.answer}.” Review this concept in ${updated.title}.` }));
+    setQuizState({ questions: prepared, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config: { difficulty: "Medium", count: prepared.length, type: "Multiple choice" }, startedAt: Date.now() });
+    setPage("quizRun");
   }
   function customizeQuiz(lecture) { setSelectedLecture(lecture); setQuizState(null); setPage("quizSetup"); }
+  function openQuizOptions(lecture) { setSelectedLecture(lecture); setQuizState(null); setPage("quizOptions"); }
   async function login(credentials) {
     try {
       const account = credentials.mode === "signup"
@@ -182,12 +222,14 @@ function App() {
   }
   function logout() { localStorage.removeItem("studyspace-profile"); setProfile(null); go("home"); }
   function finishQuiz(answers) {
-    const score = quizState.questions.reduce((total, question, index) => total + (question.answer === answers[index] ? 1 : 0), 0);
-    const attempt = { id: crypto.randomUUID(), lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, score, total: quizState.questions.length, date: new Date().toISOString() };
+    const score = quizState.questions.reduce((total, question, index) => total + (answerMatches(question, answers[index]) ? 1 : 0), 0);
+    const attempt = { id: crypto.randomUUID(), lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, topic: selectedLecture.title, difficulty: quizState.config?.difficulty || "Medium", type: quizState.config?.type || "Multiple choice", score, total: quizState.questions.length, seconds: Math.round((Date.now() - quizState.startedAt) / 1000), date: new Date().toISOString() };
     setAttempts((items) => [attempt, ...items]);
-    setQuizState((state) => ({ ...state, answers, done: true, score }));
+    setQuizState((state) => ({ ...state, answers, done: true, score, attempt }));
   }
-  function retryQuiz() { startQuiz(selectedLecture); }
+  function retryQuiz() { startQuiz(selectedLecture, quizState.config, quizState.pastQuestionIds || quizState.questions.map((question) => question.id)); }
+  function startConfiguredQuiz(settings) { startQuiz(selectedLecture, settings); }
+  function goToQuizReview() { setPage("quizReview"); }
   function openLecture(lecture) { setSelectedLecture(lecture); setPage("viewer"); }
   function addToSchedule(lecture) { setPage("schedule"); setSelectedLecture(lecture); }
   async function summarizeLecture(lecture) {
@@ -231,21 +273,23 @@ function App() {
     <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
       <button className="brand" type="button" onClick={() => go("home")} aria-label="Go to Studyspace homepage"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></button>
       <div className="nav-label">WORKSPACE</div>
-      <nav>{navItems.map(([id, icon, label]) => <button key={id} className={`nav-link ${page === id || (id === "quizzes" && page === "quizRun") ? "active" : ""}`} onClick={() => go(id)}><span className="nav-icon">{icon}</span>{label}{id === "lectures" && <span className="nav-count">{lectures.length}</span>}</button>)}</nav>
+      <nav>{navItems.map(([id, icon, label]) => <button key={id} className={`nav-link ${page === id || (id === "quizzes" && page.startsWith("quiz")) ? "active" : ""}`} onClick={() => navigate(id)}><span className="nav-icon">{icon}</span>{label}{id === "lectures" && <span className="nav-count">{lectures.length}</span>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress"><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div><button className="profile profile-button" onClick={logout} title="Sign out"><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Sign out</span></div><span className="profile-dots">↗</span></button></div>
     </aside>
     {mobileNav && <button className="nav-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} />}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><div className="breadcrumbs">Workspace <span>/</span> <strong>{pageTitle}</strong></div><div className="top-actions"><label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label><div className="calendar-trigger-wrap" ref={calendarPopover}><button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>{calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}</div><div className="top-avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><Breadcrumb><BreadcrumbList><BreadcrumbItem><BreadcrumbLink href="#workspace" onClick={(event) => { event.preventDefault(); navigate("home"); }}>Workspace</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator />{breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "My Lectures" ? "lectures" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}<BreadcrumbItem><BreadcrumbPage>{pageTitle}</BreadcrumbPage></BreadcrumbItem></BreadcrumbList></Breadcrumb><div className="top-actions"><label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label><div className="calendar-trigger-wrap" ref={calendarPopover}><button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>{calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}</div><div className="top-avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div></div></header>
       <div className="content">
         {page === "home" && <Dashboard lectures={lectures} sessions={sessions} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
-        {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={startQuiz} onAdd={saveLecture} />}
+        {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={openQuizOptions} onAdd={saveLecture} />}
         {page === "checklist" && <Checklist lectures={lectures} studied={studied} completion={completion} onToggle={toggleStudied} />}
         {page === "schedule" && <SchedulePage sessions={sessions} lectures={lectures} onSave={saveSession} onChange={setSessions} selectedLecture={selectedLecture} clearSelected={() => setSelectedLecture(null)} />}
-        {page === "viewer" && selectedLecture && <LectureViewer lecture={selectedLecture} onBack={() => go("lectures")} onToggle={() => toggleStudied(selectedLecture.id)} onSchedule={() => addToSchedule(selectedLecture)} onQuiz={() => startQuiz(selectedLecture)} onSummarize={() => summarizeLecture(selectedLecture)} summarizing={summarizingLectureId === selectedLecture.id} />}
-        {page === "quizRun" && quizState && <QuizRun state={quizState} lecture={selectedLecture} onSubmit={finishQuiz} onRetry={retryQuiz} onBack={() => go("quizzes")} />}
+        {page === "viewer" && selectedLecture && <LectureViewer lecture={selectedLecture} onBack={() => go("lectures")} onToggle={() => toggleStudied(selectedLecture.id)} onSchedule={() => addToSchedule(selectedLecture)} onQuiz={() => openQuizOptions(selectedLecture)} onSummarize={() => summarizeLecture(selectedLecture)} summarizing={summarizingLectureId === selectedLecture.id} />}
+        {page === "quizRun" && quizState && <QuizRun state={quizState} lecture={selectedLecture} onChange={setQuizState} onFinish={finishQuiz} onRetry={retryQuiz} onReview={goToQuizReview} onBack={() => go("quizzes")} />}
         {page === "quizSetup" && selectedLecture && <QuizSetup lecture={selectedLecture} onSave={saveCustomQuestions} onBack={() => go("quizzes")} />}
-        {page === "quizzes" && <QuizHistory attempts={attempts} lectures={lectures} onQuiz={startQuiz} onCustomize={customizeQuiz} generatingLectureId={generatingLectureId} />}
+        {page === "quizOptions" && selectedLecture && <QuizOptions lecture={selectedLecture} onStart={startConfiguredQuiz} onBack={() => go("quizzes")} />}
+        {page === "quizReview" && quizState && <QuizReview state={quizState} lecture={selectedLecture} onStudy={() => openLecture(selectedLecture)} onRetry={retryQuiz} onBack={() => setPage("quizRun")} />}
+        {page === "quizzes" && <QuizHistory attempts={attempts} lectures={lectures} onQuiz={openQuizOptions} onCustomize={customizeQuiz} generatingLectureId={generatingLectureId} />}
         {page === "progress" && <ProgressPage lectures={lectures} attempts={attempts} studied={studied} completion={completion} />}
       </div>
     </main>
@@ -328,14 +372,15 @@ function LecturesPage({ lectures, search, setSearch, onOpen, onToggle, onQuiz, o
 }
 function LectureCard({ lecture, onOpen, onToggle, onQuiz }) { return <article className="lecture-card"><div className="lecture-card-top"><div className="file-icon">{lecture.fileType?.includes("pdf") ? "PDF" : lecture.fileType?.startsWith("video") ? "▶" : "▤"}</div><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "✓ Studied" : "Not studied"}</span></div><span className="subject-label">{lecture.subject}</span><h3>{lecture.title}</h3><p className="lecture-desc">{lecture.description || "No description added yet."}</p><div className="lecture-meta">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}{lecture.fileName && <span> · {lecture.fileName}</span>}</div><div className="lecture-actions"><button className="button secondary small" onClick={() => onOpen(lecture)}>Open lecture</button><button className="icon-button" title="Take quiz" onClick={() => onQuiz(lecture)}>✧</button><button className="icon-button" title={lecture.studied ? "Mark as not studied" : "Mark as studied"} onClick={() => onToggle(lecture.id)}>{lecture.studied ? "✓" : "○"}</button></div></article>; }
 function LectureForm({ onSave, onCancel }) {
-  const [form, setForm] = useState({ title: "", subject: "", description: "", lectureContent: "", fileName: "", fileType: "", fileData: "", youtubeUrl: "" }); const [busy, setBusy] = useState(false); const [extractMessage, setExtractMessage] = useState("");
+  const [form, setForm] = useState({ title: "", subject: "", description: "", lectureContent: "", fileName: "", fileType: "", fileData: "", fileSize: 0, youtubeUrl: "" }); const [busy, setBusy] = useState(false); const [extractMessage, setExtractMessage] = useState(""); const fileInput = useRef(null);
   function set(key, value) { setForm((state) => ({ ...state, [key]: value })); }
+  function removeAttachment() { setForm((state) => ({ ...state, fileName: "", fileType: "", fileData: "", fileSize: 0 })); setExtractMessage(""); if (fileInput.current) fileInput.current.value = ""; }
   async function attach(file) {
     if (!file) return;
     const extension = file.name.split(".").pop()?.toLowerCase();
     const videoMimeByExtension = { mp4: "video/mp4", mpeg: "video/mpeg", mpg: "video/mpg", mov: "video/mov", avi: "video/avi", flv: "video/x-flv", webm: "video/webm", wmv: "video/wmv", "3gp": "video/3gpp" };
     const fileType = videoMimeByExtension[extension] || file.type;
-    set("fileName", file.name); set("fileType", fileType); setBusy(true); setExtractMessage("Reading lecture text…");
+    set("fileName", file.name); set("fileType", fileType); set("fileSize", file.size); setBusy(true); setExtractMessage("Reading lecture text…");
     const fileDataPromise = file.size <= 3 * 1024 * 1024 ? new Promise((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => resolve(""); reader.readAsDataURL(file); }) : Promise.resolve("");
     if (file.size > 3 * 1024 * 1024) setExtractMessage("File is over 3 MB; text can still be extracted, but the file itself will not be saved for preview.");
     if (fileType.startsWith("video/")) {
@@ -350,7 +395,7 @@ function LectureForm({ onSave, onCancel }) {
     } catch (error) { setExtractMessage(error.message || "Could not extract text; you can paste notes below."); }
     setBusy(false);
   }
-  return <form className="panel form-panel" onSubmit={(e) => { e.preventDefault(); onSave({ ...form, fileName: form.fileName || form.youtubeUrl, fileType: form.fileType || (form.youtubeUrl ? "video/youtube" : ""), fileData: form.fileData || "", lectureContent: form.lectureContent.trim() }); }}><div className="panel-heading"><div><p className="eyebrow">NEW MATERIAL</p><h2>Add a lecture</h2></div></div><div className="form-grid"><label>Lecture title<input required value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Kidney Function Tests" /></label><label>Subject<input required value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="e.g. Clinical Chemistry" /></label><label className="wide">Description<textarea value={form.description} onChange={(e) => set("description", e.target.value)} rows="2" placeholder="A short note about what this lecture covers" /></label><label className="wide">Lecture notes or video transcript<textarea value={form.lectureContent} onChange={(e) => set("lectureContent", e.target.value)} rows="4" placeholder="File text is extracted here. Paste captions or a transcript if the video is too large." /></label><label>YouTube URL<input type="url" value={form.youtubeUrl} onChange={(e) => set("youtubeUrl", e.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label><label className="upload-field">Study material <input type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.mpeg,.mpg,.mov,.avi,.flv,.webm,.wmv,.3gp,.txt" onChange={(e) => attach(e.target.files?.[0])} /><small>{form.fileName ? `${form.fileName}${busy ? " · Reading file…" : ""}` : "PDF, DOCX, PPTX, text, or video · Videos up to 3 MB"}</small>{extractMessage && <small className="extract-message">{extractMessage}</small>}</label></div><div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>Cancel</button><button className="button primary" disabled={busy}>Save lecture</button></div></form>;
+  return <form className="panel form-panel" onSubmit={(e) => { e.preventDefault(); onSave({ ...form, fileName: form.fileName || form.youtubeUrl, fileType: form.fileType || (form.youtubeUrl ? "video/youtube" : ""), fileData: form.fileData || "", lectureContent: form.lectureContent.trim() }); }}><div className="panel-heading"><div><p className="eyebrow">NEW MATERIAL</p><h2>Add a lecture</h2></div></div><div className="form-grid"><label>Lecture title<input required value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Kidney Function Tests" /></label><label>Subject<input required value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="e.g. Clinical Chemistry" /></label><label className="wide">Description<textarea value={form.description} onChange={(e) => set("description", e.target.value)} rows="2" placeholder="A short note about what this lecture covers" /></label><label className="wide">Lecture notes or video transcript<textarea value={form.lectureContent} onChange={(e) => set("lectureContent", e.target.value)} rows="4" placeholder="File text is extracted here. Paste captions or a transcript if the video is too large." /></label><label>YouTube URL<input type="url" value={form.youtubeUrl} onChange={(e) => set("youtubeUrl", e.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label><label className="upload-field">Study material<input ref={fileInput} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.mpeg,.mpg,.mov,.avi,.flv,.webm,.wmv,.3gp,.txt" onChange={(e) => attach(e.target.files?.[0])} /><small>PDF, DOCX, PPTX, text, or video · Videos up to 3 MB</small>{form.fileName && <Attachment state={busy ? "processing" : "done"} size="sm" className="lecture-file-attachment"><AttachmentMedia>{form.fileType.startsWith("video/") ? <FileVideo size={18} /> : <FileText size={18} />}</AttachmentMedia><AttachmentContent><AttachmentTitle title={form.fileName}>{form.fileName}</AttachmentTitle><AttachmentDescription>{form.fileSize >= 1024 * 1024 ? `${(form.fileSize / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(form.fileSize / 1024))} KB`} · {busy ? "Processing…" : "Ready"}</AttachmentDescription></AttachmentContent><AttachmentActions><AttachmentAction aria-label={`Remove ${form.fileName}`} title="Remove attachment" onClick={removeAttachment}><X size={15} /></AttachmentAction></AttachmentActions></Attachment>}{extractMessage && <small className="extract-message">{extractMessage}</small>}</label></div><div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>Cancel</button><button className="button primary" disabled={busy}>Save lecture</button></div></form>;
 }
 function Checklist({ lectures, studied, completion, onToggle }) { const groups = [...new Set(lectures.map((l) => l.subject))]; return <><PageHeading eyebrow="A LITTLE PROGRESS ADDS UP" title="Study checklist" subtitle="Mark topics as you study them. You can always revisit one later." /><section className="panel checklist-overview"><div className="checklist-summary"><div><p className="eyebrow">OVERALL STUDY PROGRESS</p><h2>{studied} of {lectures.length} lectures studied</h2><p className="muted">{completion}% of your study library is complete</p></div><strong>{completion}%</strong></div><ProgressBar value={completion} /></section><div className="checklist-groups">{groups.map((subject) => { const items = lectures.filter((l) => l.subject === subject); const done = items.filter((l) => l.studied).length; return <section className="panel checklist-group" key={subject}><div className="check-group-title"><div className="subject-icon">{subject.slice(0, 1)}</div><div><h2>{subject}</h2><span>{done} of {items.length} completed</span></div><ProgressBar value={percent(done, items.length)} /></div>{items.map((lecture) => <label key={lecture.id} className={`check-item ${lecture.studied ? "checked" : ""}`}><input type="checkbox" checked={lecture.studied} onChange={() => onToggle(lecture.id)} /><span className="custom-check">✓</span><span>{lecture.title}</span><span className="check-date">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}</span></label>)}</section>; })}{!lectures.length && <Empty text="Add a lecture to start your checklist." />}</div></>; }
 
@@ -371,88 +416,190 @@ function ScheduleForm({ lectures, initial, onSave, onCancel }) { const [form, se
 function ScheduleGroup({ title, date, sessions, onEdit, onDelete, onToggle }) { return <section className="schedule-group"><div className="schedule-group-heading"><div><p className="eyebrow">{title}</p>{date && <h2>{date}</h2>}</div><span>{sessions.length} {sessions.length === 1 ? "session" : "sessions"}</span></div>{sessions.length ? sessions.map((s) => <article className={`panel session-card ${s.completed ? "session-done" : ""}`} key={s.id}><div className="session-time"><strong>{fmtTime(s.start)}</strong><span>{fmtTime(s.end)}</span></div><div className="session-info"><div className="session-header"><span className="subject-label">{s.subject}</span><span className={`status ${s.completed ? "complete" : "upcoming"}`}>{s.completed ? "Completed" : s.date === today() && new Date().toTimeString().slice(0, 5) >= s.start && new Date().toTimeString().slice(0, 5) <= s.end ? "In progress" : "Upcoming"}</span></div><h3>{s.topic}</h3>{s.notes && <p>{s.notes}</p>}{s.date !== today() && <small>{fmtDate(s.date)}</small>}<div className="session-actions"><button className="text-button" onClick={() => onToggle(s.id)}>{s.completed ? "↶ Mark upcoming" : "✓ Mark complete"}</button><button className="text-button" onClick={() => onEdit(s)}>Edit</button><button className="text-button delete-text" onClick={() => onDelete(s.id)}>Delete</button></div></div></article>) : <div className="panel schedule-empty"><span>◷</span><p>Nothing scheduled here yet.</p></div>}</section>; }
 
 function LectureViewer({ lecture, onBack, onToggle, onSchedule, onQuiz, onSummarize, summarizing }) {
+  const [previewSize, setPreviewSize] = useState("normal");
+  const [pdfFitZoom, setPdfFitZoom] = useState(65);
+  const previewRef = useRef(null);
   const youtube = lecture.fileName?.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]+)/i);
   const src = youtube ? `https://www.youtube-nocookie.com/embed/${youtube[1]}` : lecture.fileData;
+  const video = youtube || lecture.fileType?.startsWith("video/");
+  const pdf = lecture.fileType === "application/pdf";
+  const hasTextPreview = Boolean(lecture.lectureContent?.trim()) && !pdf && !video;
+  useEffect(() => {
+    if (!pdf || !previewRef.current) return;
+    const host = previewRef.current;
+    const updateFitZoom = () => {
+      // Leave room for Chrome's built-in PDF toolbar and thumbnail pane.
+      const availableWidth = Math.max(280, host.clientWidth - 28);
+      setPdfFitZoom(Math.max(35, Math.min(90, Math.round((availableWidth / 8.16) * 0.68))));
+    };
+    updateFitZoom();
+    const observer = new ResizeObserver(updateFitZoom);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [pdf]);
+  const activePdfZoom = previewSize === "compact"
+    ? Math.max(30, Math.round(pdfFitZoom * 0.78))
+    : previewSize === "large" ? Math.min(120, Math.round(pdfFitZoom * 1.2)) : pdfFitZoom;
   return <>
     <button className="back-link" onClick={onBack}>← &nbsp;Back to lectures</button>
     <div className="viewer-heading"><div><p className="eyebrow">{lecture.subject}</p><h1>{lecture.title}</h1><p className="subheading">{lecture.description || "Study material"}</p></div><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "✓ Studied" : "Not studied"}</span></div>
-    <section className="panel viewer-panel">
-      {src && lecture.fileType === "application/pdf" ? <iframe className="document-viewer" src={src} title={lecture.title} /> : youtube ? <iframe className="video-viewer" src={src} title={lecture.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : src && lecture.fileType?.startsWith("video/") ? <video className="video-viewer" controls src={src} /> : <div className="file-preview"><span className="file-icon large">▤</span><h2>{lecture.fileName || "Your lecture notes"}</h2><p>{lecture.fileName ? "This file is ready to open or download." : "Use the description below as a starting point for your review."}</p>{lecture.fileData && <a className="button secondary" href={lecture.fileData} download={lecture.fileName}>Download file</a>}</div>}
+    <section ref={previewRef} className={`panel viewer-panel viewer-size-${previewSize}`}>
+      <div className="viewer-size-controls" role="group" aria-label="Lecture preview size"><span>Preview size</span>{[["compact", "Compact"], ["normal", "Default"], ["large", "Large"]].map(([value, label]) => <button key={value} type="button" className={previewSize === value ? "selected" : ""} aria-pressed={previewSize === value} onClick={() => setPreviewSize(value)}>{label}</button>)}</div>
+      {src && pdf ? <iframe className="document-viewer" src={`${src}#zoom=${activePdfZoom}`} title={lecture.title} /> : youtube ? <iframe className="video-viewer" src={src} title={lecture.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : src && lecture.fileType?.startsWith("video/") ? <video className="video-viewer" controls src={src} /> : hasTextPreview ? <article className="notes-text-preview" aria-label={`${lecture.title} extracted notes`}><h2>{lecture.fileName || "Lecture notes"}</h2><div>{lecture.lectureContent}</div></article> : <div className="file-preview"><span className="file-icon large">▤</span><h2>{lecture.fileName || "Your lecture notes"}</h2><p>{lecture.fileName ? "This file is ready to open or download." : "Use the description below as a starting point for your review."}</p>{lecture.fileData && <a className="button secondary" href={lecture.fileData} download={lecture.fileName}>Download file</a>}</div>}
       <div className="viewer-description"><p className="eyebrow">LECTURE NOTES</p><p>{lecture.description || "No description was added for this lecture."}</p>{lecture.fileName && !lecture.fileData && <p className="muted small-text">The file name is saved in your library. Reattach files up to 3 MB for an in-app preview; YouTube links can be pasted as the file URL when adding a lecture.</p>}<button className="button secondary summarize-button" onClick={onSummarize} disabled={summarizing}>{summarizing ? "Summarizing notes…" : "✦ Summarize notes"}</button>{lecture.summary && <div className="lecture-summary" aria-live="polite"><p className="eyebrow">SUMMARY</p><SummaryContent text={lecture.summary} /></div>}</div>
     </section>
     <div className="viewer-actions"><button className="button primary" onClick={onToggle}>{lecture.studied ? "✓ Studied · Mark for review" : "✓ Mark as studied"}</button><button className="button secondary" onClick={onSchedule}>＋ Add to schedule</button><button className="button secondary" onClick={onQuiz}>✧ Quiz me</button></div>
   </>;
 }
 
+function normalizeSummaryMath(text) {
+  return text
+    .replace(/\\sqrt\[3\]\{([^{}]+)\}/g, "∛$1")
+    .replace(/\\sqrt\{([^{}]+)\}/g, "√($1)")
+    .replace(/\\infty\b/g, "∞")
+    .replace(/\\neq?\b/g, "≠")
+    .replace(/\\leq?\b/g, "≤")
+    .replace(/\\geq?\b/g, "≥")
+    .replace(/\\times\b/g, "×")
+    .replace(/\\cdot\b/g, "·")
+    .replace(/\\pi\b/g, "π")
+    .replace(/\\left|\\right/g, "")
+    .replace(/\\,/g, " ")
+    .replace(/\\([{}])/g, "$1")
+    .replace(/\^([0-9]+)/g, (_, digits) => [...digits].map((digit) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(digit)]).join(""));
+}
+
 function formatSummaryInline(text) {
-  const pieces = text.split(/(\*\*[^*]+\*\*|\$[^$]+\$|`[^`]+`)/g).filter(Boolean);
+  const pieces = text.split(/(\*\*[^*]+\*\*|\$\$[\s\S]+?\$\$|\$[^$]+\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]|`[^`]+`)/g).filter(Boolean);
   return pieces.map((piece, index) => {
     if (piece.startsWith("**") && piece.endsWith("**")) return <strong key={index}>{piece.slice(2, -2)}</strong>;
-    if (piece.startsWith("$") && piece.endsWith("$")) {
-      const math = piece.slice(1, -1).replace(/\\ne\b/g, "≠").replace(/\\times\b/g, "×").replace(/\\cdot\b/g, "·").replace(/\\le\b/g, "≤").replace(/\\ge\b/g, "≥").replace(/\^([0-9]+)/g, (_, digits) => [...digits].map((digit) => "⁰¹²³⁴⁵⁶⁷⁸⁹"[Number(digit)]).join(""));
-      return <span className="summary-math" key={index}>{math}</span>;
+    if ((piece.startsWith("$$") && piece.endsWith("$$")) || (piece.startsWith("$") && piece.endsWith("$"))) {
+      return <InlineMath math={piece.startsWith("$$") ? piece.slice(2, -2) : piece.slice(1, -1)} key={index} />;
     }
+    if (piece.startsWith("\\(") && piece.endsWith("\\)")) return <InlineMath math={piece.slice(2, -2)} key={index} />;
+    if (piece.startsWith("\\[") && piece.endsWith("\\]")) return <InlineMath math={piece.slice(2, -2)} key={index} />;
     if (piece.startsWith("`") && piece.endsWith("`")) return <code key={index}>{piece.slice(1, -1)}</code>;
-    return piece;
+    return normalizeSummaryMath(piece);
+  });
+}
+
+function InlineMath({ math }) {
+  const html = katex.renderToString(math, { displayMode: false, throwOnError: false, strict: "ignore", trust: false });
+  return <span className="summary-inline-math" aria-label={math} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function renderFunctionSummary(item) {
+  const sections = item.split(/\s*(?:·|;)\s*(?=(?:Graph|Description|Domain|Range):)/i);
+  return sections.map((section, index) => {
+    const field = section.match(/^\*\*(Graph|Description|Domain|Range):\*\*\s*(.*)$/i) || section.match(/^\*\*(Graph|Description|Domain|Range)\*\*:\s*(.*)$/i) || section.match(/^(Graph|Description|Domain|Range):\s*(.*)$/i);
+    if (field) {
+      const math = /^(Domain|Range)$/i.test(field[1]);
+      const value = math ? <InlineMath math={field[2].replace(/^\$(.*)\$$/, "$1")} /> : formatSummaryInline(field[2]);
+      return <span className="summary-function-part" key={index}>{index > 0 && <span className="summary-function-separator"> · </span>}<strong>{field[1]}:</strong> {value}</span>;
+    }
+    const named = section.match(/^([^:]+):\s*(.*)$/);
+    if (index === 0 && named) {
+      const equation = named[2].match(/^\$([^$]+)\$(.*)$/) || named[2].match(/^([A-Za-z]\s*=\s*.+?)(?=\s+[—–-]\s+|$)(.*)$/);
+      if (equation) {
+        const formula = equation[1].startsWith("$") ? equation[1].slice(1, -1) : equation[1];
+        return <span className="summary-function-part" key={index}><strong>{named[1]}:</strong> <InlineMath math={formula} />{equation[2] && <> {formatSummaryInline(equation[2])}</>}</span>;
+      }
+      return <span className="summary-function-part" key={index}><strong>{named[1]}:</strong> {formatSummaryInline(named[2])}</span>;
+    }
+    return <span className="summary-function-part" key={index}>{formatSummaryInline(section)}</span>;
   });
 }
 
 function SummaryContent({ text }) {
   const blocks = [];
   let listItems = [];
+  let orderedList = false;
   const flushList = () => {
-    if (listItems.length) blocks.push(<ul key={`list-${blocks.length}`}>{listItems.map((item, index) => <li key={index}>{formatSummaryInline(item)}</li>)}</ul>);
+    if (listItems.length) {
+      const List = orderedList ? "ol" : "ul";
+      blocks.push(<List key={`list-${blocks.length}`}>{listItems.map((item, index) => {
+        const isFunction = orderedList && /(?:Domain|Range):/i.test(item);
+        return <li className={isFunction ? "summary-function" : undefined} key={index}>{isFunction ? renderFunctionSummary(item) : formatSummaryInline(item)}</li>;
+      })}</List>);
+    }
     listItems = [];
   };
 
   text.replace(/\r/g, "").split("\n").forEach((line) => {
     const content = line.trim();
-    if (!content) { flushList(); return; }
+    if (!content) { if (!orderedList) flushList(); return; }
     if (/^(---+|___+|\*\*\*+)$/.test(content)) { flushList(); return; }
     const heading = content.match(/^(#{1,6})\s+(.+)$/) || content.match(/^<h[1-6]>(.*?)<\/h[1-6]>$/i);
     if (heading) { flushList(); blocks.push(<h3 key={`heading-${blocks.length}`}>{formatSummaryInline(heading[2] || heading[1])}</h3>); return; }
-    const item = content.match(/^[*+-]\s+(.+)$/);
-    if (item) { listItems.push(item[1]); return; }
+    const numberedItem = content.match(/^\d+[.)]\s+(.+)$/);
+    const bulletItem = content.match(/^[*+-]\s+(.+)$/);
+    if (numberedItem || bulletItem) {
+      const isOrdered = Boolean(numberedItem);
+      if (listItems.length && orderedList !== isOrdered) flushList();
+      orderedList = isOrdered;
+      listItems.push((numberedItem || bulletItem)[1]); return;
+    }
+    const functionField = content.match(/^\*\*(Graph|Description|Domain|Range):\*\*\s*(.+)$/i) || content.match(/^\*\*(Graph|Description|Domain|Range)\*\*:\s*(.+)$/i) || content.match(/^(Graph|Description|Domain|Range):\s*(.+)$/i);
+    if (orderedList && listItems.length && functionField) {
+      listItems[listItems.length - 1] += ` · ${functionField[1]}: ${functionField[2]}`;
+      return;
+    }
     flushList();
     blocks.push(<p key={`paragraph-${blocks.length}`}>{formatSummaryInline(content)}</p>);
   });
   flushList();
   return <div className="summary-content">{blocks}</div>;
 }
-function QuizRun({ state, lecture, onSubmit, onRetry, onBack }) {
-  const correct = state.score || 0;
-  const items = state.questions.map((question, index) => ({
-    name: `question-${index}`,
-    required: true,
-    prompt: question.question,
-    choices: question.options.map((option) => ({ value: option, label: option })),
-  }));
-
-  function submitAnswers(event) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    onSubmit(items.map((item) => formData.get(item.name)));
-  }
-
-  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><div className="quiz-wrap panel">
-    {state.done ? <div className="quiz-result"><div className="quiz-success">✓</div><p className="eyebrow">PRACTICE MAKES PROGRESS</p><h1>Quiz complete!</h1><p className="subheading">{lecture.title}</p><div className="score-circle"><strong>{percent(correct, state.questions.length)}%</strong><span>score</span></div><div className="score-details"><div><strong>{correct}</strong><span>Correct</span></div><div><strong>{state.questions.length - correct}</strong><span>Incorrect</span></div><div><strong>{correct}/{state.questions.length}</strong><span>Score</span></div></div><div className="quiz-result-actions"><button className="button primary" onClick={onRetry}>↻ Try again</button><button className="button secondary" onClick={onBack}>Back to quizzes</button></div></div> : <>
-      <div className="quiz-top"><div><p className="eyebrow">{lecture.subject}</p><h1>{lecture.title}</h1></div></div>
-      <Questionnaire items={items} onSubmit={submitAnswers} className="quiz-questionnaire">
-        <QuestionnaireProgress className="quiz-questionnaire-progress" />
-        {items.map((item, index) => <QuestionnaireItem key={item.name} name={item.name} required={item.required} className="quiz-questionnaire-item">
-          <p className="question-label">QUESTION {index + 1}</p>
-          <QuestionnaireTitle className="quiz-question">{item.prompt}</QuestionnaireTitle>
-          <QuestionnaireChoices className="quiz-options">
-            {item.choices.map((choice, choiceIndex) => <QuestionnaireChoice key={choice.value} value={choice.value} className="quiz-questionnaire-choice"><span className="quiz-choice-letter">{String.fromCharCode(65 + choiceIndex)}</span><span>{choice.label}</span></QuestionnaireChoice>)}
-          </QuestionnaireChoices>
-          <QuestionnaireError className="quiz-questionnaire-error" />
-        </QuestionnaireItem>)}
-        <QuestionnaireActions className="quiz-questionnaire-actions"><span className="quiz-footer-count">{state.questions.length} questions</span><QuestionnairePrevious className="button secondary quiz-questionnaire-prev">← Previous</QuestionnairePrevious><QuestionnaireNext className="button primary quiz-questionnaire-next">Next question →</QuestionnaireNext><QuestionnaireSubmit className="button primary quiz-questionnaire-submit">Finish quiz</QuestionnaireSubmit></QuestionnaireActions>
-      </Questionnaire>
-    </>}
-  </div></>;
+function QuizOptions({ lecture, onStart, onBack }) {
+  const [difficulty, setDifficulty] = useState("Medium");
+  const [count, setCount] = useState(5);
+  const [type, setType] = useState("Multiple choice");
+  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-options-panel"><p className="eyebrow">QUIZ SETUP · {lecture.subject}</p><h1>{lecture.title}</h1><p className="subheading">Questions are selected from this lecture’s question bank or generated from its notes.</p><div className="quiz-settings-grid"><label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option>Easy</option><option>Medium</option><option>Hard</option></select><small>{difficulty === "Easy" ? "Recall key terms and definitions." : difficulty === "Hard" ? "Analyze and apply related ideas." : "Explain concepts and connect ideas."}</small></label><label>Questions<select value={count} onChange={(event) => setCount(Number(event.target.value))}><option value="5">5 questions</option><option value="10">10 questions</option><option value="20">20 questions</option></select></label><label>Question type<select value={type} onChange={(event) => setType(event.target.value)}><option>Multiple choice</option><option>Multi-select</option><option>True / False</option><option>Problem solving</option><option>Mixed</option></select><small>Questions remain grounded in this lecture’s question set.</small></label></div><div className="form-actions"><button className="button secondary" onClick={onBack}>Cancel</button><button className="button primary" onClick={() => onStart({ difficulty, count, type })}>Start quiz →</button></div></section></>;
 }
-function QuizHistory({ attempts, lectures, onQuiz, onCustomize, generatingLectureId }) { return <><PageHeading eyebrow="PRACTICE, REFLECT, REPEAT" title="Quizzes" subtitle="Take a quick quiz and keep track of every attempt. There’s no limit." /><div className="quiz-start-grid">{lectures.map((lecture) => { const count = getLectureQuestions(lecture).length; const hasMaterial = Boolean(lecture.lectureContent || lecture.fileData); const busy = generatingLectureId === lecture.id; return <article className="panel quiz-start-card" key={lecture.id}><div className="quiz-card-icon">✧</div><span className="subject-label">{lecture.subject}</span><h2>{lecture.title}</h2><p>{count ? `${count} lecture-specific questions · Unlimited attempts` : hasMaterial ? "Generate questions from this lecture's content" : "Add notes or a transcript to generate a quiz"}</p><button className="button primary" disabled={busy} onClick={() => onQuiz(lecture)}>{busy ? "Generating…" : count ? "Start quiz" : hasMaterial ? "Generate quiz" : "Build quiz"} <span>{busy ? "…" : "→"}</span></button>{count > 0 && <button className="quiz-customize-button" onClick={() => onCustomize(lecture)}>Customize questions <span>(optional)</span></button>}</article>; })}</div><section className="panel history-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR PRACTICE LOG</p><h2>Quiz history <span className="pill-count">{attempts.length}</span></h2></div></div>{attempts.length ? <div className="history-table"><div className="history-head"><span>QUIZ</span><span>DATE</span><span>SCORE</span><span>RESULT</span></div>{attempts.map((a) => <div className="history-row" key={a.id}><div><strong>{a.title}</strong><small>{a.subject}</small></div><span>{new Date(a.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span><strong>{a.score}/{a.total}</strong><span className="result-pill">{percent(a.score, a.total)}%</span></div>)}</div> : <Empty text="Your quiz attempts will show up here." />}</section></>; }
-function ProgressPage({ lectures, attempts, studied, completion }) { const scores = attempts.map((a) => percent(a.score, a.total)); const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0; const highest = scores.length ? Math.max(...scores) : 0; const subjects = [...new Set(lectures.map((l) => l.subject))]; return <><PageHeading eyebrow="NOTICE HOW FAR YOU'VE COME" title="Your progress" subtitle="A simple snapshot of your study habits and quiz practice." /><div className="stats-grid progress-stats"><Stat icon="✓" tint="mint" label="Study progress" value={`${studied} / ${lectures.length}`} foot={`${completion}% of lectures studied`} /><Stat icon="✧" tint="lavender" label="Quizzes taken" value={attempts.length} foot="Every attempt counts" /><Stat icon="↗" tint="peach" label="Average score" value={`${avg}%`} foot={attempts.length ? "Across all your attempts" : "Your first quiz is waiting"} /><Stat icon="★" tint="blue" label="Personal best" value={`${highest}%`} foot="Your highest quiz score" /></div><section className="panel subject-progress"><div className="panel-heading"><div><p className="eyebrow">ONE STEP AT A TIME</p><h2>Progress by subject</h2></div></div>{subjects.length ? subjects.map((subject, index) => { const group = lectures.filter((l) => l.subject === subject); const done = group.filter((l) => l.studied).length; const value = percent(done, group.length); return <div className="subject-progress-row" key={subject}><div className="subject-row-label"><div className={`subject-icon subject-color-${index % 4}`}>{subject.slice(0, 1)}</div><strong>{subject}</strong><span>{done} of {group.length} studied</span><b>{value}%</b></div><ProgressBar value={value} color={index % 2 ? "purple" : "green"} /></div>; }) : <Empty text="Add lectures to see progress by subject." />}</section><section className="panel study-insight"><span>✦</span><div><strong>Progress is built one session at a time.</strong><p>Keep checking off topics and revisiting quizzes to see your confidence grow.</p></div></section></>; }
+
+function QuizRun({ state, lecture, onChange, onFinish, onRetry, onReview, onBack }) {
+  const index = state.index;
+  const question = state.questions[index];
+  const selected = state.answers[index] || "";
+  const submitted = Boolean(state.submitted[index]);
+  const isCorrect = answerMatches(question, selected);
+  const progress = percent(index + (submitted ? 1 : 0), state.questions.length);
+  const elapsed = Math.max(0, Math.round((Date.now() - state.startedAt) / 1000));
+  function update(changes) { onChange((current) => ({ ...current, ...changes })); }
+  function choose(option) {
+    if (submitted) return;
+    const value = question.type === "Multi-select"
+      ? (Array.isArray(selected) ? selected : []).includes(option)
+        ? selected.filter((item) => item !== option)
+        : [...(Array.isArray(selected) ? selected : []), option]
+      : option;
+    update({ answers: { ...state.answers, [index]: value } });
+  }
+  function submitCurrent() {
+    if (!selected || (Array.isArray(selected) && !selected.length)) return;
+    if (submitted) {
+      if (index === state.questions.length - 1) onFinish(state.answers);
+      return;
+    }
+    update({ submitted: { ...state.submitted, [index]: true } });
+  }
+  function previous() { update({ index: Math.max(0, index - 1) }); }
+  function next() { update({ index: Math.min(state.questions.length - 1, index + 1) }); }
+  if (state.done) {
+    const mistakes = state.questions.filter((item, i) => !answerMatches(item, state.answers[i])).length;
+    const seconds = state.attempt?.seconds || elapsed;
+    const scorePct = percent(state.score, state.questions.length);
+    return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-wrap quiz-result"><div className="quiz-success">{scorePct >= 70 ? "✓" : "↗"}</div><p className="eyebrow">QUIZ RESULTS · {state.config?.difficulty || "Medium"}</p><h1>{scorePct >= 80 ? "Excellent work!" : scorePct >= 60 ? "Good progress—keep practicing." : "A good starting point for review."}</h1><p className="subheading">{lecture.title}</p><div className="score-circle"><strong>{scorePct}%</strong><span>score</span></div><div className="score-details"><div><strong>{state.score}</strong><span>Correct</span></div><div><strong>{mistakes}</strong><span>Incorrect</span></div><div><strong>{Math.floor(seconds / 60)}m {seconds % 60}s</strong><span>Time</span></div></div>{scorePct < 60 && <p className="quiz-low-score">Review this topic before your next attempt to strengthen your mastery.</p>}<div className="quiz-result-actions">{mistakes > 0 && <button className="button secondary" onClick={onReview}>Review mistakes</button>}<button className="button primary" onClick={onRetry}>↻ Try again</button><button className="button secondary" onClick={onBack}>Back to quizzes</button></div></section></>;
+  }
+  return <><button className="back-link" onClick={() => { if (window.confirm("Leave this quiz? Your current answers will be lost.")) onBack(); }}>← &nbsp;Exit quiz</button><section className="panel quiz-wrap quiz-run-panel"><div className="quiz-top"><div><p className="eyebrow">{lecture.subject} · {state.config?.difficulty || "Medium"}</p><h1>{lecture.title}</h1></div><span className="quiz-counter">{String(index + 1).padStart(2, "0")} / {String(state.questions.length).padStart(2, "0")}</span></div><div className="quiz-progress-track"><span style={{ width: `${Math.max(5, progress)}%` }} /></div><div className="quiz-run-content"><p className="question-label">QUESTION {index + 1} · {question.type || state.config?.type || "Multiple choice"}</p><h2 className="quiz-question">{question.question}</h2><div className="quiz-options">{question.options.map((option, choiceIndex) => { const isSelected = Array.isArray(selected) ? selected.includes(option) : selected === option; const isRight = Array.isArray(question.correctAnswer) ? question.correctAnswer.includes(option) : question.correctAnswer === option; return <button key={`${option}-${choiceIndex}`} type="button" className={`quiz-option ${isSelected ? "selected" : ""} ${submitted && isRight ? "correct" : ""} ${submitted && isSelected && !isRight ? "incorrect" : ""}`} disabled={submitted} aria-pressed={isSelected} onClick={() => choose(option)}><span className="quiz-choice-letter">{String.fromCharCode(65 + choiceIndex)}</span><span className="quiz-option-text">{option}</span>{submitted && isRight && <span className="quiz-option-mark">✓</span>}</button>; })}</div>{!submitted && <div className="quiz-hint-area"><button className="text-button" type="button" onClick={() => update({ hints: { ...state.hints, [index]: true } })}>Show hint</button>{state.hints[index] && <p className="quiz-hint">{question.hint}</p>}</div>}{submitted && <div className={`quiz-feedback ${isCorrect ? "is-correct" : "is-incorrect"}`} role="status"><strong>{isCorrect ? "That’s right." : `Not quite. The answer is: ${answerText(question.correctAnswer)}`}</strong><p>{question.explanation}</p></div>}</div><div className="quiz-run-footer"><span>{index + 1} of {state.questions.length} questions</span><div><button className="button secondary" onClick={previous} disabled={index === 0}>← Previous</button>{submitted && index < state.questions.length - 1 ? <button className="button primary" onClick={next}>Next question →</button> : <button className="button primary" onClick={submitCurrent} disabled={!selected || (Array.isArray(selected) && !selected.length)}>{submitted ? "Finish quiz" : "Submit answer"}</button>}</div></div></section></>;
+}
+
+function QuizReview({ state, lecture, onStudy, onRetry, onBack }) {
+  const mistakes = state.questions.map((question, index) => ({ question, index })).filter(({ question, index }) => !answerMatches(question, state.answers[index]));
+  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to results</button><section className="quiz-review"><PageHeading eyebrow="LEARN FROM MISSES" title="Review mistakes" subtitle={`${mistakes.length} question${mistakes.length === 1 ? "" : "s"} to revisit in ${lecture.title}.`} />{mistakes.map(({ question, index }) => <article className="panel quiz-review-card" key={question.id}><p className="question-label">QUESTION {index + 1} · {question.topic}</p><h2>{question.question}</h2><p><span>Your answer</span><strong>{answerText(state.answers[index])}</strong></p><p><span>Correct answer</span><strong>{answerText(question.correctAnswer)}</strong></p><p className="quiz-review-explanation">{question.explanation}</p><button className="text-button" onClick={onStudy}>Study this topic →</button></article>)}{!mistakes.length && <div className="panel"><p>No mistakes to review. Nice work!</p></div>}<div className="quiz-result-actions"><button className="button primary" onClick={onRetry}>Try again</button><button className="button secondary" onClick={onStudy}>Back to lesson</button></div></section></>;
+}
+
+function QuizHistory({ attempts, lectures, onQuiz, onCustomize, generatingLectureId }) { return <><PageHeading eyebrow="PRACTICE, REFLECT, REPEAT" title="Quizzes" subtitle="Practice with questions from your lecture notes. Your scores and topic mastery are saved on this device." /><div className="quiz-start-grid">{lectures.map((lecture) => { const count = getLectureQuestions(lecture).length; const hasMaterial = Boolean(lecture.lectureContent || lecture.fileData); const busy = generatingLectureId === lecture.id; const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; return <article className="panel quiz-start-card" key={lecture.id}><div className="quiz-card-icon">✧</div><span className="subject-label">{lecture.subject}</span><h2>{lecture.title}</h2><p>{count ? `${count} lecture-specific questions · Unlimited attempts` : hasMaterial ? "Generate questions from this lecture's content" : "Add notes or a transcript to generate a quiz"}</p>{best !== null && <p className="quiz-topic-stat">Best {best}% · Average {average}% across {topicAttempts.length} attempt{topicAttempts.length === 1 ? "" : "s"}</p>}<button className="button primary" disabled={busy} onClick={() => onQuiz(lecture)}>{busy ? "Preparing…" : count ? "Set up quiz" : hasMaterial ? "Generate quiz" : "Build quiz"} <span>{busy ? "…" : "→"}</span></button>{count > 0 && <button className="quiz-customize-button" onClick={() => onCustomize(lecture)}>Create questions <span>(optional)</span></button>}</article>; })}</div><section className="panel history-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR PRACTICE LOG</p><h2>Quiz history <span className="pill-count">{attempts.length}</span></h2></div></div>{attempts.length ? <div className="history-table"><div className="history-head"><span>QUIZ</span><span>DATE</span><span>SCORE</span><span>RESULT</span></div>{attempts.map((a) => <div className="history-row" key={a.id}><div><strong>{a.title}</strong><small>{a.subject} · {a.difficulty || "Medium"}</small></div><span>{new Date(a.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span><strong>{a.score}/{a.total}</strong><span className="result-pill">{percent(a.score, a.total)}%</span></div>)}</div> : <Empty text="Your quiz attempts will show up here." />}</section></>; }
+function ProgressPage({ lectures, attempts, studied, completion }) { const scores = attempts.map((a) => percent(a.score, a.total)); const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0; const highest = scores.length ? Math.max(...scores) : 0; const subjects = [...new Set(lectures.map((l) => l.subject))]; const topics = lectures.map((lecture) => { const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; return { lecture, average, best, tries: topicAttempts.length }; }); const needsReview = topics.filter((topic) => topic.average !== null && topic.average < 60); return <><PageHeading eyebrow="NOTICE HOW FAR YOU'VE COME" title="Your progress" subtitle="A simple snapshot of your study habits and quiz practice." /><div className="stats-grid progress-stats"><Stat icon="✓" tint="mint" label="Study progress" value={`${studied} / ${lectures.length}`} foot={`${completion}% of lectures studied`} /><Stat icon="✧" tint="lavender" label="Quizzes taken" value={attempts.length} foot="Every attempt counts" /><Stat icon="↗" tint="peach" label="Average score" value={`${avg}%`} foot={attempts.length ? "Across all your attempts" : "Your first quiz is waiting"} /><Stat icon="★" tint="blue" label="Personal best" value={`${highest}%`} foot="Your highest quiz score" /></div><section className="panel subject-progress"><div className="panel-heading"><div><p className="eyebrow">ONE STEP AT A TIME</p><h2>Progress by subject</h2></div></div>{subjects.length ? subjects.map((subject, index) => { const group = lectures.filter((l) => l.subject === subject); const done = group.filter((l) => l.studied).length; const value = percent(done, group.length); return <div className="subject-progress-row" key={subject}><div className="subject-row-label"><div className={`subject-icon subject-color-${index % 4}`}>{subject.slice(0, 1)}</div><strong>{subject}</strong><span>{done} of {group.length} studied</span><b>{value}%</b></div><ProgressBar value={value} color={index % 2 ? "purple" : "green"} /></div>; }) : <Empty text="Add lectures to see progress by subject." />}</section><section className="panel subject-progress quiz-mastery"><div className="panel-heading"><div><p className="eyebrow">QUIZ MASTERY</p><h2>Progress by topic</h2></div></div>{topics.length ? topics.map(({ lecture, average, best, tries }) => <div className="quiz-mastery-row" key={lecture.id}><div><strong>{lecture.title}</strong><span>{tries ? `${tries} attempt${tries === 1 ? "" : "s"} · Best ${best}% · Average ${average}%` : "No quiz attempts yet"}</span></div>{average !== null && <b className={average < 60 ? "needs-review" : ""}>{average}%</b>}</div>) : <Empty text="Add lectures to see quiz mastery." />}{needsReview.length > 0 && <p className="quiz-review-reminder">Review suggested: {needsReview.map(({ lecture }) => lecture.title).join(", ")}. A short revision session may help.</p>}</section><section className="panel study-insight"><span>✦</span><div><strong>Progress is built one session at a time.</strong><p>Keep checking off topics and revisiting quizzes to see your confidence grow.</p></div></section></>; }
 
 export default App;

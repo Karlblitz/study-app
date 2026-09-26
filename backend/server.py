@@ -145,6 +145,13 @@ class SummaryHandler(BaseHTTPRequestHandler):
             "Keep the key concepts, definitions, formulas, and important relationships. "
             "Use clear headings and useful bullet points. Do not add facts that are not present."
         )
+        source_prompt += (
+            " Render every equation as inline LaTeX enclosed in single dollar signs, like $y=x^2$. "
+            "Never use display math or put equations on their own lines. For summaries of mathematical "
+            "functions, write one numbered paragraph per function in this order: Function Name → "
+            "equation → description → Domain → Range. Keep all parts of a function in that same "
+            "paragraph, separated with semicolons, with no line breaks between them."
+        )
         prompt = f"{source_prompt}\n\nLecture: {title}\nSubject: {subject or 'Not provided'}"
         if notes:
             prompt += f"\n\nSOURCE NOTES:\n{notes}"
