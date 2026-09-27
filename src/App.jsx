@@ -14,6 +14,26 @@ import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbP
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { ScoreTrendChart } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupAction,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { Plus } from "lucide-react";
 const seedLectures = [
   { id: "l1", subject: "Microbiology", title: "Antimicrobial Susceptibility Testing", description: "Disk diffusion, MIC, and interpretation of susceptibility results.", studied: true, dateAdded: "2026-09-23", fileName: "", fileType: "", fileData: "", questions: questionSets["Antimicrobial Susceptibility Testing"] },
   { id: "l2", subject: "Clinical Chemistry", title: "Liver Function Tests", description: "Markers of liver injury, cholestasis, and synthetic function.", studied: true, dateAdded: "2026-09-22", fileName: "", fileType: "", fileData: "", questions: questionSets["Liver Function Tests"] },
@@ -28,6 +48,33 @@ const initialSessions = [
   { id: "s3", subject: "Hematology", topic: "RBC Morphology", date: new Date(Date.now() + 86400000).toISOString().slice(0, 10), start: "10:00", end: "11:00", notes: "", completed: false },
 ];
 const navItems = [["home", "home", "Dashboard"], ["lectures", "▤", "My Lectures"], ["checklist", "✓", "Study Checklist"], ["schedule", "▦", "Study Schedule"], ["quizzes", "▧", "Quizzes"], ["progress", "◔", "Progress"]];
+
+function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
+  const { setOpenMobile } = useSidebar();
+  const handleNavigate = (destination) => {
+    navigate(destination);
+    setOpenMobile(false);
+  };
+
+  return <SidebarGroup className="study-sidebar-group">
+    <SidebarGroupLabel className="nav-label">WORKSPACE</SidebarGroupLabel>
+    <SidebarGroupAction className="study-sidebar-add" aria-label="Open My Lectures" title="Open My Lectures" onClick={() => handleNavigate("lectures")}><Plus /></SidebarGroupAction>
+    <SidebarGroupContent>
+      <SidebarMenu>
+        {navItems.map(([id, icon, label]) => {
+          const isActive = page === id || (id === "lectures" && page === "viewer") || (id === "quizzes" && page.startsWith("quiz"));
+          return <SidebarMenuItem key={id}>
+          <SidebarMenuButton className={`nav-link${isActive ? " active" : ""}`} isActive={isActive} tooltip={label} onClick={() => handleNavigate(id)}>
+            <span className="nav-icon">{icon === "home" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg> : id === "lectures" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z" /></svg> : id === "schedule" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z" /></svg> : icon}</span>
+            <span>{label}</span>
+            {id === "lectures" && <SidebarMenuBadge className="nav-count">{lectures.length}</SidebarMenuBadge>}
+          </SidebarMenuButton>
+        </SidebarMenuItem>;
+        })}
+      </SidebarMenu>
+    </SidebarGroupContent>
+  </SidebarGroup>;
+}
 const readStore = (key, fallback) => { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } };
 const fmtDate = (date, options = { month: "long", day: "numeric", year: "numeric" }) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options);
 const fmtTime = (time) => { if (!time) return ""; const [h, m] = time.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
@@ -60,7 +107,6 @@ function App() {
   const [search, setSearch] = useState("");
   const [selectedLecture, setSelectedLecture] = useState(null);
   const [quizState, setQuizState] = useState(null);
-  const [mobileNav, setMobileNav] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [toast, setToast] = useState("");
@@ -131,7 +177,7 @@ function App() {
   const breadcrumbParent = page === "viewer" ? "My Lectures" : page.startsWith("quiz") ? "Quizzes" : "Workspace";
 
   function notify(message) { setToast(message); window.setTimeout(() => setToast(""), 2400); }
-  function go(next) { setPage(next); setSelectedLecture(null); setQuizState(null); setMobileNav(false); }
+  function go(next) { setPage(next); setSelectedLecture(null); setQuizState(null); }
   function navigate(next) {
     if (page === "quizRun" && quizState && !quizState.done && !window.confirm("Leave this quiz? Your current answers will be lost.")) return;
     go(next);
@@ -294,16 +340,39 @@ function App() {
 
   if (isStarting) return <AppStartupSkeleton theme={theme} />;
 
-  return <div className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`}>
-    <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
-      <button className="brand" type="button" onClick={() => go("home")} aria-label="Go to Studyspace homepage"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></button>
-      <div className="nav-label">WORKSPACE</div>
-      <nav>{navItems.map(([id, icon, label]) => <button key={id} className={`nav-link ${page === id || (id === "quizzes" && page.startsWith("quiz")) ? "active" : ""}`} onClick={() => navigate(id)}><span className="nav-icon">{icon === "home" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg> : icon}</span>{label}{id === "lectures" && <span className="nav-count">{lectures.length}</span>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress"><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div><button className="profile profile-button" onClick={() => setProfileEditorOpen(true)} title="Edit profile"><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Edit profile</span></div><span className="profile-dots">↗</span></button></div>
-    </aside>
-    {mobileNav && <button className="nav-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} />}
-    <main className="main-area">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><Breadcrumb><BreadcrumbList><BreadcrumbItem><BreadcrumbLink href="#workspace" onClick={(event) => { event.preventDefault(); navigate("home"); }}>Workspace</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator />{breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "My Lectures" ? "lectures" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}<BreadcrumbItem><BreadcrumbPage>{pageTitle}</BreadcrumbPage></BreadcrumbItem></BreadcrumbList></Breadcrumb><div className="top-actions"><label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label><div className="calendar-trigger-wrap" ref={calendarPopover}><button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>{calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}</div><button type="button" className="top-avatar profile-avatar-button" aria-label="Edit profile" title="Edit profile" onClick={() => setProfileEditorOpen(true)}>{(profile?.name || "S").slice(0, 1).toUpperCase()}</button></div></header>
+  return <SidebarProvider className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`} style={{ "--sidebar-width": "246px", "--sidebar-width-icon": "64px" }}>
+    <Sidebar collapsible="icon" className="study-sidebar">
+      <SidebarHeader className="study-sidebar-header">
+        <button className="brand" type="button" onClick={() => go("home")} aria-label="Go to Studyspace homepage"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></button>
+      </SidebarHeader>
+      <SidebarContent className="study-sidebar-content">
+        <WorkspaceSidebarNavigation page={page} lectures={lectures} navigate={navigate} />
+      </SidebarContent>
+      <SidebarFooter className="study-sidebar-footer">
+        <div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress"><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div>
+        <button type="button" className="profile profile-button" onClick={() => setProfileEditorOpen(true)} title="Edit profile" aria-label={`Edit profile for ${profile?.name || "Student"}`}><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Edit profile</span></div><span className="profile-dots">↗</span></button>
+      </SidebarFooter>
+      <SidebarRail />
+    </Sidebar>
+    <SidebarInset className="main-area">
+      <header className="topbar">
+        <SidebarTrigger className="sidebar-trigger" aria-label="Toggle sidebar" />
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem><BreadcrumbLink href="#workspace" onClick={(event) => { event.preventDefault(); navigate("home"); }}>Workspace</BreadcrumbLink></BreadcrumbItem>
+            <BreadcrumbSeparator />
+            {breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "My Lectures" ? "lectures" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}
+            <BreadcrumbItem><BreadcrumbPage>{pageTitle}</BreadcrumbPage></BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        <div className="top-actions">
+          <label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label>
+          <div className="calendar-trigger-wrap" ref={calendarPopover}>
+            <button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>
+            {calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}
+          </div>
+        </div>
+      </header>
       <div className="content">
         {page === "home" && <Dashboard lectures={lectures} sessions={sessions} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
         {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={openQuizOptions} onAdd={saveLecture} />}
@@ -317,11 +386,11 @@ function App() {
         {page === "quizzes" && <QuizHistory attempts={attempts} lectures={lectures} onQuiz={openQuizOptions} onCustomize={customizeQuiz} generatingLectureId={generatingLectureId} />}
         {page === "progress" && <ProgressPage lectures={lectures} attempts={attempts} studied={studied} completion={completion} />}
       </div>
-    </main>
+    </SidebarInset>
     {toast && <div className="toast">✓ &nbsp;{toast}</div>}
     {profileEditorOpen && profile && <ProfileEditor profile={profile} onSave={saveProfile} onClose={() => setProfileEditorOpen(false)} onLogout={logout} />}
     {!profile && <LoginScreen googleClientId={googleClientId} googleButton={googleButton} authChoice={authChoice} onLogin={login} onFinish={finishLogin} />}
-  </div>;
+  </SidebarProvider>;
 }
 
 function AppStartupSkeleton({ theme }) {

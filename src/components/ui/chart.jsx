@@ -1,11 +1,23 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-const chartWidth = 360;
-const chartHeight = 260;
-const plot = { left: 44, right: 20, top: 18, bottom: 42 };
+const chartHeight = 300;
+const plot = { left: 48, right: 24, top: 22, bottom: 38 };
 
 /** Responsive SVG chart for the learner's most recent quiz scores. */
 export function ScoreTrendChart({ attempts = [] }) {
+  const chartContainer = useRef(null);
+  const [chartWidth, setChartWidth] = useState(720);
+
+  useEffect(() => {
+    const element = chartContainer.current;
+    if (!element) return undefined;
+    const updateWidth = () => setChartWidth(Math.max(320, Math.round(element.getBoundingClientRect().width)));
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   const scores = useMemo(() => [...attempts]
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
     .slice(-8)
@@ -15,12 +27,15 @@ export function ScoreTrendChart({ attempts = [] }) {
       label: `Attempt ${Math.max(1, attempts.length - Math.min(8, attempts.length) + index + 1)}`,
     })), [attempts]);
 
-  const points = scores.map((item, index) => {
+  const bars = scores.map((item, index) => {
     const usableWidth = chartWidth - plot.left - plot.right;
     const usableHeight = chartHeight - plot.top - plot.bottom;
-    const x = scores.length === 1 ? plot.left + usableWidth / 2 : plot.left + (index / (scores.length - 1)) * usableWidth;
-    const y = plot.top + ((100 - item.scorePercent) / 100) * usableHeight;
-    return { ...item, x, y };
+    const slotWidth = usableWidth / scores.length;
+    const barWidth = Math.min(52, slotWidth * 0.58);
+    const x = plot.left + (index * slotWidth) + (slotWidth - barWidth) / 2;
+    const height = Math.max((item.scorePercent / 100) * usableHeight, 2);
+    const y = plot.top + usableHeight - height;
+    return { ...item, x, y, width: barWidth, height };
   });
 
   if (!scores.length) {
@@ -30,24 +45,26 @@ export function ScoreTrendChart({ attempts = [] }) {
     </section>;
   }
 
-  const line = points.map(({ x, y }) => `${x},${y}`).join(" ");
   const usableHeight = chartHeight - plot.top - plot.bottom;
   return <section className="panel score-chart-panel" aria-labelledby="score-chart-title">
     <div className="score-chart-heading"><div><p className="eyebrow">QUIZ PERFORMANCE</p><h2 id="score-chart-title">Recent quiz scores</h2></div><span>Latest {scores.length} attempt{scores.length === 1 ? "" : "s"}</span></div>
-    <div className="score-chart-scroll">
-      <svg className="score-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Quiz score trend over ${scores.length} attempts, from ${scores[0].scorePercent}% to ${scores.at(-1).scorePercent}%`}>
+    <div className="score-chart-scroll" ref={chartContainer}>
+      <svg className="score-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none" role="img" aria-label={`Quiz score trend over ${scores.length} attempts, from ${scores[0].scorePercent}% to ${scores.at(-1).scorePercent}%`}>
         {[0, 25, 50, 75, 100].map((value) => {
           const y = plot.top + ((100 - value) / 100) * usableHeight;
           return <g className="score-chart-grid" key={value}><line x1={plot.left} x2={chartWidth - plot.right} y1={y} y2={y} /><text x={plot.left - 9} y={y + 4} textAnchor="end">{value}%</text></g>;
         })}
-        {points.length > 1 && <polyline className="score-chart-line" points={line} />}
-        {points.map((point, index) => <g className="score-chart-point" key={`${point.id || point.date}-${index}`}>
-          <title>{`${point.label}: ${point.scorePercent}%${point.title ? ` - ${point.title}` : ""}`}</title>
-          <circle cx={point.x} cy={point.y} r="5" />
-          <text x={point.x} y={chartHeight - 12} textAnchor="middle">{index + 1}</text>
+        {bars.map((bar, index) => <g className="score-chart-bar-group" key={`${bar.id || bar.date}-${index}`}>
+          <title>{`${bar.label}: ${bar.scorePercent}%${bar.title ? ` - ${bar.title}` : ""}`}</title>
+          <rect className="score-chart-bar" x={bar.x} y={bar.y} width={bar.width} height={bar.height} rx="4" />
         </g>)}
       </svg>
     </div>
-    <div className="score-chart-caption"><span>Oldest attempt</span><span>Most recent</span></div>
+    <div className="score-chart-legend" style={{ "--legend-count": scores.length }} aria-label="Quiz scores by attempt">
+      {scores.map((score, index) => <div className="score-chart-legend-item" key={`${score.id || score.date}-${index}`} title={score.title || score.label}>
+        <span className="score-chart-legend-label"><span className="score-chart-legend-marker" aria-hidden="true" /><span className="score-chart-legend-title">{score.title || score.label}</span></span>
+        <strong>{score.scorePercent}%</strong>
+      </div>)}
+    </div>
   </section>;
 }
