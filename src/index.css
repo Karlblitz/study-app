@@ -83,6 +83,73 @@
     --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Shared neutral palette and the single electric-blue accent. */
+:root {
+    --background: #f5f5f5;
+    --foreground: #202020;
+    --card: #ffffff;
+    --card-foreground: #202020;
+    --popover: #ffffff;
+    --popover-foreground: #202020;
+    --primary: #4d8dff;
+    --primary-foreground: #ffffff;
+    --secondary: #eeeeee;
+    --secondary-foreground: #202020;
+    --muted: #eeeeee;
+    --muted-foreground: #737373;
+    --accent: #eeeeee;
+    --accent-foreground: #202020;
+    --border: #e5e5e5;
+    --input: #e5e5e5;
+    --ring: #4d8dff;
+    --chart-1: #4d8dff;
+    --chart-2: #4d8dff;
+    --chart-3: #4d8dff;
+    --chart-4: #4d8dff;
+    --chart-5: #4d8dff;
+    --sidebar: #ffffff;
+    --sidebar-foreground: #202020;
+    --sidebar-primary: #4d8dff;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #eaf1ff;
+    --sidebar-accent-foreground: #202020;
+    --sidebar-border: #e5e5e5;
+    --sidebar-ring: #4d8dff;
+}
+
+.dark {
+    --background: #101010;
+    --foreground: #f5f5f5;
+    --card: #1a1a1a;
+    --card-foreground: #f5f5f5;
+    --popover: #1a1a1a;
+    --popover-foreground: #f5f5f5;
+    --primary: #4d8dff;
+    --primary-foreground: #ffffff;
+    --secondary: #242424;
+    --secondary-foreground: #f5f5f5;
+    --muted: #242424;
+    --muted-foreground: #8a8a8a;
+    --accent: #242424;
+    --accent-foreground: #f5f5f5;
+    --border: #2a2a2a;
+    --input: #2a2a2a;
+    --ring: #4d8dff;
+    --chart-1: #4d8dff;
+    --chart-2: #4d8dff;
+    --chart-3: #4d8dff;
+    --chart-4: #4d8dff;
+    --chart-5: #4d8dff;
+    --sidebar: #1a1a1a;
+    --sidebar-foreground: #f5f5f5;
+    --sidebar-primary: #4d8dff;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #252b35;
+    --sidebar-accent-foreground: #f5f5f5;
+    --sidebar-border: #2a2a2a;
+    --sidebar-ring: #4d8dff;
+}
+
 .dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
@@ -127,4 +194,38 @@
   html {
     @apply font-sans;
     }
+}
+
+/* Dark shadcn primitives use the same monochrome palette and blue accent. */
+.dark {
+    --background: #101010;
+    --foreground: #f5f5f5;
+    --card: #1a1a1a;
+    --card-foreground: #f5f5f5;
+    --popover: #1a1a1a;
+    --popover-foreground: #f5f5f5;
+    --primary: #4d8dff;
+    --primary-foreground: #ffffff;
+    --secondary: #242424;
+    --secondary-foreground: #f5f5f5;
+    --muted: #242424;
+    --muted-foreground: #8a8a8a;
+    --accent: #242424;
+    --accent-foreground: #f5f5f5;
+    --border: #2a2a2a;
+    --input: #2a2a2a;
+    --ring: #4d8dff;
+    --chart-1: #4d8dff;
+    --chart-2: #4d8dff;
+    --chart-3: #4d8dff;
+    --chart-4: #4d8dff;
+    --chart-5: #4d8dff;
+    --sidebar: #1a1a1a;
+    --sidebar-foreground: #f5f5f5;
+    --sidebar-primary: #4d8dff;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #252b35;
+    --sidebar-accent-foreground: #f5f5f5;
+    --sidebar-border: #2a2a2a;
+    --sidebar-ring: #4d8dff;
 }

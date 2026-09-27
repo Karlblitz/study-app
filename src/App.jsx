@@ -1,10 +1,10 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import questionSets from "./questions.js";
 import { extractLectureText } from "./contentExtraction.js";
 import { generateQuestionsFromText } from "./quizGenerator.js";
-import { createLocalAccount, signInLocalAccount } from "./auth.js";
+import { createLocalAccount, signInLocalAccount, updateLocalAccountName } from "./auth.js";
 import { Eye, EyeOff, FileText, FileVideo, X } from "lucide-react";
 import { CalendarDays, Moon, Sun } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
@@ -12,6 +12,8 @@ import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
+import { ScoreTrendChart } from "@/components/ui/chart";
+import { Skeleton } from "@/components/ui/skeleton";
 const seedLectures = [
   { id: "l1", subject: "Microbiology", title: "Antimicrobial Susceptibility Testing", description: "Disk diffusion, MIC, and interpretation of susceptibility results.", studied: true, dateAdded: "2026-09-23", fileName: "", fileType: "", fileData: "", questions: questionSets["Antimicrobial Susceptibility Testing"] },
   { id: "l2", subject: "Clinical Chemistry", title: "Liver Function Tests", description: "Markers of liver injury, cholestasis, and synthetic function.", studied: true, dateAdded: "2026-09-22", fileName: "", fileType: "", fileData: "", questions: questionSets["Liver Function Tests"] },
@@ -25,7 +27,7 @@ const initialSessions = [
   { id: "s2", subject: "Clinical Chemistry", topic: "Liver Function Tests", date: today(), start: "14:00", end: "15:00", notes: "", completed: false },
   { id: "s3", subject: "Hematology", topic: "RBC Morphology", date: new Date(Date.now() + 86400000).toISOString().slice(0, 10), start: "10:00", end: "11:00", notes: "", completed: false },
 ];
-const navItems = [["home", "⌂", "Dashboard"], ["lectures", "▤", "My Lectures"], ["checklist", "✓", "Study Checklist"], ["schedule", "▦", "Study Schedule"], ["quizzes", "▧", "Quizzes"], ["progress", "◔", "Progress"]];
+const navItems = [["home", "home", "Dashboard"], ["lectures", "▤", "My Lectures"], ["checklist", "✓", "Study Checklist"], ["schedule", "▦", "Study Schedule"], ["quizzes", "▧", "Quizzes"], ["progress", "◔", "Progress"]];
 const readStore = (key, fallback) => { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } };
 const fmtDate = (date, options = { month: "long", day: "numeric", year: "numeric" }) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options);
 const fmtTime = (time) => { if (!time) return ""; const [h, m] = time.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
@@ -35,13 +37,21 @@ const answerMatches = (question, answer) => Array.isArray(question.correctAnswer
   : question.correctAnswer === answer;
 const answerText = (answer) => Array.isArray(answer) ? answer.join(", ") : answer || "No answer";
 function getLectureQuestions(lecture) {
+  if (lecture.quizSource === "custom" && lecture.questions?.length) return lecture.questions;
+  const title = lecture.title?.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const questionSetTitle = title === "conic equations"
+    ? "Equations of Conic- Quarter 1_Module 5"
+    : Object.keys(questionSets).find((key) => key.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === title);
+  if (questionSetTitle && questionSets[questionSetTitle]?.length) return questionSets[questionSetTitle];
   if (lecture.questions?.length) return lecture.questions;
   return [];
 }
 
 function App() {
+  const [isStarting, setIsStarting] = useState(true);
   const [theme, setTheme] = useState(() => readStore("studyspace-theme", "light"));
   const [profile, setProfile] = useState(() => readStore("studyspace-profile", null));
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [authChoice, setAuthChoice] = useState(null);
   const [page, setPage] = useState("home");
   const [lectures, setLectures] = useState(() => readStore("studyspace-lectures", seedLectures));
@@ -59,6 +69,10 @@ function App() {
   const googleButton = useRef(null);
   const calendarPopover = useRef(null);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsStarting(false), 350);
+    return () => window.clearTimeout(timer);
+  }, []);
   useEffect(() => { localStorage.setItem("studyspace-theme", JSON.stringify(theme)); }, [theme]);
   useEffect(() => { localStorage.setItem("studyspace-lectures", JSON.stringify(lectures)); }, [lectures]);
   useEffect(() => { localStorage.setItem("studyspace-sessions", JSON.stringify(sessions)); }, [sessions]);
@@ -221,6 +235,15 @@ function App() {
     setProfile(authChoice); setAuthChoice(null);
   }
   function logout() { localStorage.removeItem("studyspace-profile"); setProfile(null); go("home"); }
+  function saveProfile(updates) {
+    const updatedProfile = { ...profile, ...updates, name: updates.name.trim() };
+    if (profile?.source === "local") updateLocalAccountName(profile.email, updatedProfile.name);
+    if (localStorage.getItem("studyspace-profile")) localStorage.setItem("studyspace-profile", JSON.stringify(updatedProfile));
+    setProfile(updatedProfile);
+    setProfileEditorOpen(false);
+    notify("Profile updated.");
+    return "";
+  }
   function finishQuiz(answers) {
     const score = quizState.questions.reduce((total, question, index) => total + (answerMatches(question, answers[index]) ? 1 : 0), 0);
     const attempt = { id: crypto.randomUUID(), lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, topic: selectedLecture.title, difficulty: quizState.config?.difficulty || "Medium", type: quizState.config?.type || "Multiple choice", score, total: quizState.questions.length, seconds: Math.round((Date.now() - quizState.startedAt) / 1000), date: new Date().toISOString() };
@@ -269,16 +292,18 @@ function App() {
     }
   }
 
+  if (isStarting) return <AppStartupSkeleton theme={theme} />;
+
   return <div className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`}>
     <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
       <button className="brand" type="button" onClick={() => go("home")} aria-label="Go to Studyspace homepage"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></button>
       <div className="nav-label">WORKSPACE</div>
-      <nav>{navItems.map(([id, icon, label]) => <button key={id} className={`nav-link ${page === id || (id === "quizzes" && page.startsWith("quiz")) ? "active" : ""}`} onClick={() => navigate(id)}><span className="nav-icon">{icon}</span>{label}{id === "lectures" && <span className="nav-count">{lectures.length}</span>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress"><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div><button className="profile profile-button" onClick={logout} title="Sign out"><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Sign out</span></div><span className="profile-dots">↗</span></button></div>
+      <nav>{navItems.map(([id, icon, label]) => <button key={id} className={`nav-link ${page === id || (id === "quizzes" && page.startsWith("quiz")) ? "active" : ""}`} onClick={() => navigate(id)}><span className="nav-icon">{icon === "home" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg> : icon}</span>{label}{id === "lectures" && <span className="nav-count">{lectures.length}</span>}</button>)}</nav>
+      <div className="sidebar-bottom"><div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress"><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div><button className="profile profile-button" onClick={() => setProfileEditorOpen(true)} title="Edit profile"><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Edit profile</span></div><span className="profile-dots">↗</span></button></div>
     </aside>
     {mobileNav && <button className="nav-scrim" aria-label="Close menu" onClick={() => setMobileNav(false)} />}
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><Breadcrumb><BreadcrumbList><BreadcrumbItem><BreadcrumbLink href="#workspace" onClick={(event) => { event.preventDefault(); navigate("home"); }}>Workspace</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator />{breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "My Lectures" ? "lectures" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}<BreadcrumbItem><BreadcrumbPage>{pageTitle}</BreadcrumbPage></BreadcrumbItem></BreadcrumbList></Breadcrumb><div className="top-actions"><label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label><div className="calendar-trigger-wrap" ref={calendarPopover}><button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>{calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}</div><div className="top-avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div></div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">☰</button><Breadcrumb><BreadcrumbList><BreadcrumbItem><BreadcrumbLink href="#workspace" onClick={(event) => { event.preventDefault(); navigate("home"); }}>Workspace</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator />{breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "My Lectures" ? "lectures" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}<BreadcrumbItem><BreadcrumbPage>{pageTitle}</BreadcrumbPage></BreadcrumbItem></BreadcrumbList></Breadcrumb><div className="top-actions"><label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label><div className="calendar-trigger-wrap" ref={calendarPopover}><button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>{calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}</div><button type="button" className="top-avatar profile-avatar-button" aria-label="Edit profile" title="Edit profile" onClick={() => setProfileEditorOpen(true)}>{(profile?.name || "S").slice(0, 1).toUpperCase()}</button></div></header>
       <div className="content">
         {page === "home" && <Dashboard lectures={lectures} sessions={sessions} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
         {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={openQuizOptions} onAdd={saveLecture} />}
@@ -294,7 +319,71 @@ function App() {
       </div>
     </main>
     {toast && <div className="toast">✓ &nbsp;{toast}</div>}
+    {profileEditorOpen && profile && <ProfileEditor profile={profile} onSave={saveProfile} onClose={() => setProfileEditorOpen(false)} onLogout={logout} />}
     {!profile && <LoginScreen googleClientId={googleClientId} googleButton={googleButton} authChoice={authChoice} onLogin={login} onFinish={finishLogin} />}
+  </div>;
+}
+
+function AppStartupSkeleton({ theme }) {
+  const darkClass = theme === "dark" ? "dark-mode dark" : "";
+  return <div className={`app-shell app-loading-shell ${darkClass}`} role="status" aria-live="polite" aria-label="Loading Studyspace">
+    <aside className="app-loading-sidebar" aria-hidden="true">
+      <div className="app-loading-brand"><Skeleton className="loading-mark" /><Skeleton className="loading-wordmark" /></div>
+      <Skeleton className="loading-nav-label" />
+      <div className="app-loading-nav">{Array.from({ length: 6 }, (_, index) => <Skeleton className={`loading-nav-item ${index === 0 ? "is-active" : ""}`} key={index} />)}</div>
+      <Skeleton className="loading-tip" />
+    </aside>
+    <main className="app-loading-main" aria-hidden="true">
+      <header className="app-loading-topbar"><Skeleton className="loading-breadcrumb" /><div><Skeleton className="loading-theme" /><Skeleton className="loading-date" /><Skeleton className="loading-avatar" /></div></header>
+      <section className="app-loading-content">
+        <div className="loading-title-row"><div><Skeleton className="loading-eyebrow" /><Skeleton className="loading-title" /><Skeleton className="loading-subtitle" /></div><Skeleton className="loading-action" /></div>
+        <div className="loading-stats">{Array.from({ length: 4 }, (_, index) => <div className="loading-stat-card" key={index}><Skeleton className="loading-stat-icon" /><Skeleton className="loading-stat-label" /><Skeleton className="loading-stat-value" /><Skeleton className="loading-stat-meta" /></div>)}</div>
+        <div className="loading-panels"><div><Skeleton className="loading-panel loading-panel-large" /><Skeleton className="loading-panel loading-panel-short" /></div><Skeleton className="loading-panel loading-panel-side" /></div>
+      </section>
+    </main>
+    <span className="sr-only">Loading your study space…</span>
+  </div>;
+}
+
+function ProfileEditor({ profile, onSave, onClose, onLogout }) {
+  const [form, setForm] = useState({
+    name: profile.name || "",
+    email: profile.email || "",
+    contactEmail: profile.contactEmail || "",
+    phone: profile.phone || "",
+    school: profile.school || "",
+    program: profile.program || "",
+    yearLevel: profile.yearLevel || "",
+    studyGoal: profile.studyGoal || "",
+  });
+  const [error, setError] = useState("");
+  function set(key, value) { setForm((current) => ({ ...current, [key]: value })); }
+  function submit(event) {
+    event.preventDefault();
+    if (!form.name.trim()) { setError("Enter your name to save your profile."); return; }
+    if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) { setError("Enter a valid contact email address."); return; }
+    setError("");
+    onSave(form);
+  }
+  return <div className="profile-modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="panel profile-editor" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
+      <div className="profile-editor-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2 id="profile-editor-title">Edit profile</h2><p>Update the details shown in your study space.</p></div><button type="button" className="icon-button" aria-label="Close edit profile" onClick={onClose}>×</button></div>
+      <form onSubmit={submit}>
+        <div className="profile-form-grid">
+          <label>Display name<input autoFocus required value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="Your name" /></label>
+          <label>Sign-in email<input type="email" value={form.email} readOnly aria-describedby="profile-email-note" /></label>
+          <label>Contact email<input type="email" value={form.contactEmail} onChange={(event) => set("contactEmail", event.target.value)} placeholder="name@example.com" /></label>
+          <label>Phone number<input type="tel" value={form.phone} onChange={(event) => set("phone", event.target.value)} placeholder="Optional" /></label>
+          <label>School or institution<input value={form.school} onChange={(event) => set("school", event.target.value)} placeholder="Optional" /></label>
+          <label>Program or course<input value={form.program} onChange={(event) => set("program", event.target.value)} placeholder="Optional" /></label>
+          <label>Year or level<input value={form.yearLevel} onChange={(event) => set("yearLevel", event.target.value)} placeholder="Optional" /></label>
+          <label className="profile-form-wide">Study goal<textarea rows="3" value={form.studyGoal} onChange={(event) => set("studyGoal", event.target.value)} placeholder="What are you working toward? (Optional)" /></label>
+        </div>
+        <small className="profile-email-note" id="profile-email-note">Your sign-in email stays linked to this account. Add a contact email above if you want to use a different address in your profile.</small>
+        {error && <p className="profile-form-error" role="alert">{error}</p>}
+        <div className="profile-editor-actions"><button type="button" className="button text-button profile-sign-out" onClick={onLogout}>Sign out</button><div><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary">Save profile</button></div></div>
+      </form>
+    </section>
   </div>;
 }
 
@@ -600,6 +689,6 @@ function QuizReview({ state, lecture, onStudy, onRetry, onBack }) {
 }
 
 function QuizHistory({ attempts, lectures, onQuiz, onCustomize, generatingLectureId }) { return <><PageHeading eyebrow="PRACTICE, REFLECT, REPEAT" title="Quizzes" subtitle="Practice with questions from your lecture notes. Your scores and topic mastery are saved on this device." /><div className="quiz-start-grid">{lectures.map((lecture) => { const count = getLectureQuestions(lecture).length; const hasMaterial = Boolean(lecture.lectureContent || lecture.fileData); const busy = generatingLectureId === lecture.id; const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; return <article className="panel quiz-start-card" key={lecture.id}><div className="quiz-card-icon">✧</div><span className="subject-label">{lecture.subject}</span><h2>{lecture.title}</h2><p>{count ? `${count} lecture-specific questions · Unlimited attempts` : hasMaterial ? "Generate questions from this lecture's content" : "Add notes or a transcript to generate a quiz"}</p>{best !== null && <p className="quiz-topic-stat">Best {best}% · Average {average}% across {topicAttempts.length} attempt{topicAttempts.length === 1 ? "" : "s"}</p>}<button className="button primary" disabled={busy} onClick={() => onQuiz(lecture)}>{busy ? "Preparing…" : count ? "Set up quiz" : hasMaterial ? "Generate quiz" : "Build quiz"} <span>{busy ? "…" : "→"}</span></button>{count > 0 && <button className="quiz-customize-button" onClick={() => onCustomize(lecture)}>Create questions <span>(optional)</span></button>}</article>; })}</div><section className="panel history-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR PRACTICE LOG</p><h2>Quiz history <span className="pill-count">{attempts.length}</span></h2></div></div>{attempts.length ? <div className="history-table"><div className="history-head"><span>QUIZ</span><span>DATE</span><span>SCORE</span><span>RESULT</span></div>{attempts.map((a) => <div className="history-row" key={a.id}><div><strong>{a.title}</strong><small>{a.subject} · {a.difficulty || "Medium"}</small></div><span>{new Date(a.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span><strong>{a.score}/{a.total}</strong><span className="result-pill">{percent(a.score, a.total)}%</span></div>)}</div> : <Empty text="Your quiz attempts will show up here." />}</section></>; }
-function ProgressPage({ lectures, attempts, studied, completion }) { const scores = attempts.map((a) => percent(a.score, a.total)); const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0; const highest = scores.length ? Math.max(...scores) : 0; const subjects = [...new Set(lectures.map((l) => l.subject))]; const topics = lectures.map((lecture) => { const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; return { lecture, average, best, tries: topicAttempts.length }; }); const needsReview = topics.filter((topic) => topic.average !== null && topic.average < 60); return <><PageHeading eyebrow="NOTICE HOW FAR YOU'VE COME" title="Your progress" subtitle="A simple snapshot of your study habits and quiz practice." /><div className="stats-grid progress-stats"><Stat icon="✓" tint="mint" label="Study progress" value={`${studied} / ${lectures.length}`} foot={`${completion}% of lectures studied`} /><Stat icon="✧" tint="lavender" label="Quizzes taken" value={attempts.length} foot="Every attempt counts" /><Stat icon="↗" tint="peach" label="Average score" value={`${avg}%`} foot={attempts.length ? "Across all your attempts" : "Your first quiz is waiting"} /><Stat icon="★" tint="blue" label="Personal best" value={`${highest}%`} foot="Your highest quiz score" /></div><section className="panel subject-progress"><div className="panel-heading"><div><p className="eyebrow">ONE STEP AT A TIME</p><h2>Progress by subject</h2></div></div>{subjects.length ? subjects.map((subject, index) => { const group = lectures.filter((l) => l.subject === subject); const done = group.filter((l) => l.studied).length; const value = percent(done, group.length); return <div className="subject-progress-row" key={subject}><div className="subject-row-label"><div className={`subject-icon subject-color-${index % 4}`}>{subject.slice(0, 1)}</div><strong>{subject}</strong><span>{done} of {group.length} studied</span><b>{value}%</b></div><ProgressBar value={value} color={index % 2 ? "purple" : "green"} /></div>; }) : <Empty text="Add lectures to see progress by subject." />}</section><section className="panel subject-progress quiz-mastery"><div className="panel-heading"><div><p className="eyebrow">QUIZ MASTERY</p><h2>Progress by topic</h2></div></div>{topics.length ? topics.map(({ lecture, average, best, tries }) => <div className="quiz-mastery-row" key={lecture.id}><div><strong>{lecture.title}</strong><span>{tries ? `${tries} attempt${tries === 1 ? "" : "s"} · Best ${best}% · Average ${average}%` : "No quiz attempts yet"}</span></div>{average !== null && <b className={average < 60 ? "needs-review" : ""}>{average}%</b>}</div>) : <Empty text="Add lectures to see quiz mastery." />}{needsReview.length > 0 && <p className="quiz-review-reminder">Review suggested: {needsReview.map(({ lecture }) => lecture.title).join(", ")}. A short revision session may help.</p>}</section><section className="panel study-insight"><span>✦</span><div><strong>Progress is built one session at a time.</strong><p>Keep checking off topics and revisiting quizzes to see your confidence grow.</p></div></section></>; }
+function ProgressPage({ lectures, attempts, studied, completion }) { const scores = attempts.map((a) => percent(a.score, a.total)); const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0; const highest = scores.length ? Math.max(...scores) : 0; const subjects = [...new Set(lectures.map((l) => l.subject))]; const topics = lectures.map((lecture) => { const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; return { lecture, average, best, tries: topicAttempts.length }; }); const needsReview = topics.filter((topic) => topic.average !== null && topic.average < 60); return <><PageHeading eyebrow="NOTICE HOW FAR YOU'VE COME" title="Your progress" subtitle="A simple snapshot of your study habits and quiz practice." /><div className="stats-grid progress-stats"><Stat icon="✓" tint="mint" label="Study progress" value={`${studied} / ${lectures.length}`} foot={`${completion}% of lectures studied`} /><Stat icon="✧" tint="lavender" label="Quizzes taken" value={attempts.length} foot="Every attempt counts" /><Stat icon="↗" tint="peach" label="Average score" value={`${avg}%`} foot={attempts.length ? "Across all your attempts" : "Your first quiz is waiting"} /><Stat icon="★" tint="blue" label="Personal best" value={`${highest}%`} foot="Your highest quiz score" /></div><ScoreTrendChart attempts={attempts} /><section className="panel subject-progress"><div className="panel-heading"><div><p className="eyebrow">ONE STEP AT A TIME</p><h2>Progress by subject</h2></div></div>{subjects.length ? subjects.map((subject, index) => { const group = lectures.filter((l) => l.subject === subject); const done = group.filter((l) => l.studied).length; const value = percent(done, group.length); return <div className="subject-progress-row" key={subject}><div className="subject-row-label"><div className={`subject-icon subject-color-${index % 4}`}>{subject.slice(0, 1)}</div><strong>{subject}</strong><span>{done} of {group.length} studied</span><b>{value}%</b></div><ProgressBar value={value} color={index % 2 ? "purple" : "green"} /></div>; }) : <Empty text="Add lectures to see progress by subject." />}</section><section className="panel subject-progress quiz-mastery"><div className="panel-heading"><div><p className="eyebrow">QUIZ MASTERY</p><h2>Progress by topic</h2></div></div>{topics.length ? topics.map(({ lecture, average, best, tries }) => <div className="quiz-mastery-row" key={lecture.id}><div><strong>{lecture.title}</strong><span>{tries ? `${tries} attempt${tries === 1 ? "" : "s"} · Best ${best}% · Average ${average}%` : "No quiz attempts yet"}</span></div>{average !== null && <b className={average < 60 ? "needs-review" : ""}>{average}%</b>}</div>) : <Empty text="Add lectures to see quiz mastery." />}{needsReview.length > 0 && <p className="quiz-review-reminder">Review suggested: {needsReview.map(({ lecture }) => lecture.title).join(", ")}. A short revision session may help.</p>}</section><section className="panel study-insight"><span>✦</span><div><strong>Progress is built one session at a time.</strong><p>Keep checking off topics and revisiting quizzes to see your confidence grow.</p></div></section></>; }
 
 export default App;

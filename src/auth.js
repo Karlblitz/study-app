@@ -39,3 +39,12 @@ export async function signInLocalAccount({ email, password }) {
   if (enteredHash !== account.passwordHash) throw new Error("The email or password is incorrect.");
   return { name: account.name, email: account.email, source: "local" };
 }
+
+export function updateLocalAccountName(email, name) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const users = getUsers();
+  const account = users.find((user) => user.email === normalizedEmail);
+  if (!account) return;
+  account.name = name.trim();
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+}
