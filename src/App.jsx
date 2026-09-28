@@ -10,6 +10,8 @@ import { CalendarDays, Moon, Sun } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScheduleTimeField } from "./components/ScheduleTimeField.jsx";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { Attachment, AttachmentAction, AttachmentActions, AttachmentContent, AttachmentDescription, AttachmentMedia, AttachmentTitle } from "@/components/ui/attachment";
 import { ScoreTrendChart } from "@/components/ui/chart";
@@ -65,7 +67,7 @@ function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
           const isActive = page === id || (id === "lectures" && page === "viewer") || (id === "quizzes" && page.startsWith("quiz"));
           return <SidebarMenuItem key={id}>
           <SidebarMenuButton className={`nav-link${isActive ? " active" : ""}`} isActive={isActive} tooltip={label} onClick={() => handleNavigate(id)}>
-            <span className="nav-icon">{icon === "home" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg> : id === "lectures" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z" /></svg> : id === "schedule" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z" /></svg> : icon}</span>
+            <span className="nav-icon">{icon === "home" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg> : id === "lectures" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 0 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg> : id === "schedule" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z" /></svg> : icon}</span>
             <span>{label}</span>
             {id === "lectures" && <SidebarMenuBadge className="nav-count">{lectures.length}</SidebarMenuBadge>}
           </SidebarMenuButton>
@@ -78,6 +80,37 @@ function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
 const readStore = (key, fallback) => { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } };
 const fmtDate = (date, options = { month: "long", day: "numeric", year: "numeric" }) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options);
 const fmtTime = (time) => { if (!time) return ""; const [h, m] = time.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+const formatScheduleTime = (time, format) => {
+  if (format === "24h") return time;
+  if (!time) return "";
+  const [hour, minute] = time.split(":").map(Number);
+  return `${String(hour % 12 || 12).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${hour >= 12 ? "PM" : "AM"}`;
+};
+function parseScheduleTime(value, format) {
+  const text = value.trim();
+  if (format === "24h") {
+    const match = text.match(/^(?:([01]\d|2[0-3])):([0-5]\d)$/);
+    return match ? `${match[1]}:${match[2]}` : null;
+  }
+  const match = text.match(/^(0?[1-9]|1[0-2]):([0-5]\d)\s*(AM|PM)$/i);
+  if (!match) return null;
+  const hour = (Number(match[1]) % 12) + (match[3].toUpperCase() === "PM" ? 12 : 0);
+  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+}
+function getScheduleTimeParts(time, format) {
+  const [hourText, minute] = time.split(":");
+  const hour24 = Number(hourText);
+  return {
+    hour: format === "12h" ? String(hour24 % 12 || 12).padStart(2, "0") : hourText,
+    minute,
+    period: hour24 >= 12 ? "PM" : "AM",
+  };
+}
+function scheduleTimeFromParts(parts, format) {
+  let hour = Number(parts.hour);
+  if (format === "12h") hour = (hour % 12) + (parts.period === "PM" ? 12 : 0);
+  return `${String(hour).padStart(2, "0")}:${parts.minute}`;
+}
 const percent = (num, den) => den ? Math.round((num / den) * 100) : 0;
 const answerMatches = (question, answer) => Array.isArray(question.correctAnswer)
   ? Array.isArray(answer) && question.correctAnswer.length === answer.length && question.correctAnswer.every((item) => answer.includes(item))
@@ -423,9 +456,12 @@ function ProfileEditor({ profile, onSave, onClose, onLogout }) {
     school: profile.school || "",
     program: profile.program || "",
     yearLevel: profile.yearLevel || "",
+    yearLevelOther: profile.yearLevelOther || "",
     studyGoal: profile.studyGoal || "",
   });
   const [error, setError] = useState("");
+  const yearLevels = ["Grade 11", "Grade 12", "1st Year College", "2nd Year College", "3rd Year College", "4th Year College", "5th Year College", "6th Year College", "Graduate Student", "Other", "Prefer not to say"];
+  const savedYearLevel = form.yearLevel && !yearLevels.includes(form.yearLevel) ? [form.yearLevel, ...yearLevels] : yearLevels;
   function set(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   function submit(event) {
     event.preventDefault();
@@ -445,7 +481,18 @@ function ProfileEditor({ profile, onSave, onClose, onLogout }) {
           <label>Phone number<input type="tel" value={form.phone} onChange={(event) => set("phone", event.target.value)} placeholder="Optional" /></label>
           <label>School or institution<input value={form.school} onChange={(event) => set("school", event.target.value)} placeholder="Optional" /></label>
           <label>Program or course<input value={form.program} onChange={(event) => set("program", event.target.value)} placeholder="Optional" /></label>
-          <label>Year or level<input value={form.yearLevel} onChange={(event) => set("yearLevel", event.target.value)} placeholder="Optional" /></label>
+          <div className="profile-form-field">
+            <label htmlFor="profile-year-level">Year or level</label>
+            <Select value={form.yearLevel || null} onValueChange={(value) => setForm((current) => ({ ...current, yearLevel: value || "", yearLevelOther: value === "Other" ? current.yearLevelOther : "" }))}>
+              <SelectTrigger id="profile-year-level" aria-label="Year or level">
+                <SelectValue placeholder="Select your year or level" />
+              </SelectTrigger>
+              <SelectContent>
+                {savedYearLevel.map((yearLevel) => <SelectItem key={yearLevel} value={yearLevel}>{yearLevel}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {form.yearLevel === "Other" && <label className="profile-year-level-other" htmlFor="profile-year-level-other">Please specify your year or level<input id="profile-year-level-other" value={form.yearLevelOther} onChange={(event) => set("yearLevelOther", event.target.value)} placeholder="Enter your year or level…" /></label>}
+          </div>
           <label className="profile-form-wide">Study goal<textarea rows="3" value={form.studyGoal} onChange={(event) => set("studyGoal", event.target.value)} placeholder="What are you working toward? (Optional)" /></label>
         </div>
         <small className="profile-email-note" id="profile-email-note">Your sign-in email stays linked to this account. Add a contact email above if you want to use a different address in your profile.</small>
@@ -570,7 +617,45 @@ function SchedulePage({ sessions, lectures, onSave, onChange, selectedLecture, c
     <div className="schedule-columns"><div><ScheduleGroup title="TODAY" date={fmtDate(today())} sessions={todaySessions} onEdit={edit} onDelete={remove} onToggle={toggle} /><ScheduleGroup title="UPCOMING" sessions={upcoming} onEdit={edit} onDelete={remove} onToggle={toggle} /><ScheduleGroup title="COMPLETED" sessions={completed} onEdit={edit} onDelete={remove} onToggle={toggle} /></div><div className="schedule-side panel"><span className="calendar-icon">▦</span><p className="eyebrow">MAKE A PLAN</p><h2>Give your goals a time and place.</h2><p className="muted">A short, focused review can make a big difference. Add notes to remember what you want to cover.</p><button className="button secondary" onClick={() => { setEditing(null); setFormOpen(true); }}>Plan a session</button><div className="side-stat"><strong>{completed.length}</strong><span>completed sessions</span></div></div></div>
   </>;
 }
-function ScheduleForm({ lectures, initial, onSave, onCancel }) { const [form, setForm] = useState({ subject: initial?.subject || "", topic: initial?.topic || "", date: initial?.date || today(), start: initial?.start || "19:00", end: initial?.end || "20:00", notes: initial?.notes || "" }); function set(k, v) { setForm((s) => ({ ...s, [k]: v })); } return <form className="panel form-panel" onSubmit={(e) => { e.preventDefault(); onSave(form); }}><div className="panel-heading"><div><p className="eyebrow">{initial?.id ? "UPDATE SESSION" : "MAKE TIME TO STUDY"}</p><h2>{initial?.id ? "Edit session" : "Add study session"}</h2></div></div><div className="form-grid"><label>Subject<input list="subjects" required value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="e.g. Microbiology" /><datalist id="subjects">{[...new Set(lectures.map((l) => l.subject))].map((s) => <option key={s} value={s} />)}</datalist></label><label>Lecture or topic<input list="topics" required value={form.topic} onChange={(e) => set("topic", e.target.value)} placeholder="What will you study?" /><datalist id="topics">{lectures.map((l) => <option key={l.id} value={l.title} />)}</datalist></label><label>Date<input required type="date" value={form.date} onChange={(e) => set("date", e.target.value)} /></label><div className="time-fields"><label>Start<input required type="time" value={form.start} onChange={(e) => set("start", e.target.value)} /></label><label>End<input required type="time" value={form.end} onChange={(e) => set("end", e.target.value)} /></label></div><label className="wide">Notes <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} rows="2" placeholder="Optional reminders for your session" /></label></div><div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button className="button primary">{initial?.id ? "Save changes" : "Add to schedule"}</button></div></form>; }
+function ScheduleForm({ lectures, initial, onSave, onCancel }) {
+  const [form, setForm] = useState({ subject: initial?.subject || "", topic: initial?.topic || "", date: initial?.date || today(), start: initial?.start || "19:00", end: initial?.end || "20:00", notes: initial?.notes || "" });
+  const [timeFormat, setTimeFormat] = useState(() => readStore("studyspace-time-format", "12h") === "24h" ? "24h" : "12h");
+  const [timeDrafts, setTimeDrafts] = useState(() => ({ start: formatScheduleTime(initial?.start || "19:00", readStore("studyspace-time-format", "12h") === "24h" ? "24h" : "12h"), end: formatScheduleTime(initial?.end || "20:00", readStore("studyspace-time-format", "12h") === "24h" ? "24h" : "12h") }));
+  const [pickerField, setPickerField] = useState(null);
+  function set(k, v) { setForm((s) => ({ ...s, [k]: v })); }
+  useEffect(() => { try { localStorage.setItem("studyspace-time-format", JSON.stringify(timeFormat)); } catch {} }, [timeFormat]);
+  const parsedTimes = { start: parseScheduleTime(timeDrafts.start, timeFormat), end: parseScheduleTime(timeDrafts.end, timeFormat) };
+  const timeErrors = {
+    start: parsedTimes.start ? "" : `Enter a valid ${timeFormat === "12h" ? "time such as 08:30 AM" : "time in HH:mm format"}.`,
+    end: !parsedTimes.end ? `Enter a valid ${timeFormat === "12h" ? "time such as 08:30 AM" : "time in HH:mm format"}.` : parsedTimes.start && parsedTimes.end <= parsedTimes.start ? "End time must be later than start time." : "",
+  };
+  function changeFormat(nextFormat) {
+    setTimeDrafts((drafts) => Object.fromEntries(["start", "end"].map((field) => {
+      const canonical = parseScheduleTime(drafts[field], timeFormat);
+      return [field, canonical ? formatScheduleTime(canonical, nextFormat) : drafts[field]];
+    })));
+    setTimeFormat(nextFormat);
+  }
+  function editTime(field, value) {
+    setTimeDrafts((drafts) => ({ ...drafts, [field]: value }));
+    const canonical = parseScheduleTime(value, timeFormat);
+    if (canonical) set(field, canonical);
+  }
+  function chooseTime(field, value) {
+    set(field, value);
+    setTimeDrafts((drafts) => ({ ...drafts, [field]: formatScheduleTime(value, timeFormat) }));
+  }
+  function timeField(field, label) {
+    const errorId = `schedule-${field}-time-error`;
+    return <ScheduleTimeField field={field} label={label} format={timeFormat} canonicalTime={form[field]} draft={timeDrafts[field]} error={timeErrors[field]} errorId={errorId} open={pickerField === field} onOpenChange={(nextOpen) => setPickerField(nextOpen ? field : null)} onDraftChange={(value) => editTime(field, value)} onCommit={(value) => chooseTime(field, value)} onNormalize={(canonical) => setTimeDrafts((drafts) => ({ ...drafts, [field]: formatScheduleTime(canonical, timeFormat) }))} parseTime={parseScheduleTime} formatTime={formatScheduleTime} getParts={getScheduleTimeParts} toCanonical={scheduleTimeFromParts} />;
+  }
+  function submit(event) {
+    event.preventDefault();
+    if (!parsedTimes.start || !parsedTimes.end || parsedTimes.end <= parsedTimes.start) return;
+    onSave({ ...form, start: parsedTimes.start, end: parsedTimes.end });
+  }
+  return <form className="panel form-panel" onSubmit={submit}><div className="panel-heading"><div><p className="eyebrow">{initial?.id ? "UPDATE SESSION" : "MAKE TIME TO STUDY"}</p><h2>{initial?.id ? "Edit session" : "Add study session"}</h2></div></div><div className="form-grid"><label>Subject<input list="subjects" required value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="e.g. Microbiology" /><datalist id="subjects">{[...new Set(lectures.map((l) => l.subject))].map((s) => <option key={s} value={s} />)}</datalist></label><label>Lecture or topic<input list="topics" required value={form.topic} onChange={(e) => set("topic", e.target.value)} placeholder="What will you study?" /><datalist id="topics">{lectures.map((l) => <option key={l.id} value={l.title} />)}</datalist></label><label>Date<input required type="date" value={form.date} onChange={(e) => set("date", e.target.value)} /></label><div className="time-fields"><div className="schedule-time-format"><label htmlFor="schedule-time-format-select">Time Format</label><Select value={timeFormat} onValueChange={changeFormat}><SelectTrigger id="schedule-time-format-select" aria-label="Time Format" className="schedule-format-trigger"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="12h">12-hour (AM/PM)</SelectItem><SelectItem value="24h">24-hour</SelectItem></SelectContent></Select></div>{timeField("start", "Start")}{timeField("end", "End")}</div><label className="wide">Notes <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} rows="2" placeholder="Optional reminders for your session" /></label></div><div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button className="button primary" disabled={!parsedTimes.start || !parsedTimes.end || parsedTimes.end <= parsedTimes.start}>{initial?.id ? "Save changes" : "Add to schedule"}</button></div></form>;
+}
 function ScheduleGroup({ title, date, sessions, onEdit, onDelete, onToggle }) { return <section className="schedule-group"><div className="schedule-group-heading"><div><p className="eyebrow">{title}</p>{date && <h2>{date}</h2>}</div><span>{sessions.length} {sessions.length === 1 ? "session" : "sessions"}</span></div>{sessions.length ? sessions.map((s) => <article className={`panel session-card ${s.completed ? "session-done" : ""}`} key={s.id}><div className="session-time"><strong>{fmtTime(s.start)}</strong><span>{fmtTime(s.end)}</span></div><div className="session-info"><div className="session-header"><span className="subject-label">{s.subject}</span><span className={`status ${s.completed ? "complete" : "upcoming"}`}>{s.completed ? "Completed" : s.date === today() && new Date().toTimeString().slice(0, 5) >= s.start && new Date().toTimeString().slice(0, 5) <= s.end ? "In progress" : "Upcoming"}</span></div><h3>{s.topic}</h3>{s.notes && <p>{s.notes}</p>}{s.date !== today() && <small>{fmtDate(s.date)}</small>}<div className="session-actions"><button className="text-button" onClick={() => onToggle(s.id)}>{s.completed ? "↶ Mark upcoming" : "✓ Mark complete"}</button><button className="text-button" onClick={() => onEdit(s)}>Edit</button><button className="text-button delete-text" onClick={() => onDelete(s.id)}>Delete</button></div></div></article>) : <div className="panel schedule-empty"><span>◷</span><p>Nothing scheduled here yet.</p></div>}</section>; }
 
 function LectureViewer({ lecture, onBack, onToggle, onSchedule, onQuiz, onSummarize, summarizing }) {
