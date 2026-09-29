@@ -80,6 +80,40 @@ function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
 const readStore = (key, fallback) => { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } };
 const fmtDate = (date, options = { month: "long", day: "numeric", year: "numeric" }) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options);
 const fmtTime = (time) => { if (!time) return ""; const [h, m] = time.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
+function minutesFromClock(time) {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
+}
+function getScheduleReminders(sessions) {
+  const date = today();
+  const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  return sessions
+    .filter((session) => !session.completed && session.date >= date)
+    .filter((session) => session.date !== date || minutesFromClock(session.end) >= nowMins)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start))
+    .slice(0, 8)
+    .map((session) => {
+      const startMins = minutesFromClock(session.start);
+      const endMins = minutesFromClock(session.end);
+      let reminderLabel = fmtDate(session.date, { weekday: "short", month: "short", day: "numeric" });
+      let tone = "upcoming";
+      if (session.date === date) {
+        if (nowMins >= startMins && nowMins <= endMins) {
+          reminderLabel = "In progress";
+          tone = "live";
+        } else if (startMins >= nowMins && startMins - nowMins <= 60) {
+          reminderLabel = "Starting soon";
+          tone = "soon";
+        } else {
+          reminderLabel = "Today";
+        }
+      } else if (session.date === tomorrow) {
+        reminderLabel = "Tomorrow";
+      }
+      return { ...session, reminderLabel, tone };
+    });
+}
 const formatScheduleTime = (time, format) => {
   if (format === "24h") return time;
   if (!time) return "";
@@ -141,12 +175,14 @@ function App() {
   const [selectedLecture, setSelectedLecture] = useState(null);
   const [quizState, setQuizState] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [toast, setToast] = useState("");
   const [generatingLectureId, setGeneratingLectureId] = useState(null);
   const [summarizingLectureId, setSummarizingLectureId] = useState(null);
   const googleButton = useRef(null);
   const calendarPopover = useRef(null);
+  const notificationsPopover = useRef(null);
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   useEffect(() => {
     const timer = window.setTimeout(() => setIsStarting(false), 350);
@@ -157,18 +193,24 @@ function App() {
   useEffect(() => { localStorage.setItem("studyspace-sessions", JSON.stringify(sessions)); }, [sessions]);
   useEffect(() => { localStorage.setItem("studyspace-attempts", JSON.stringify(attempts)); }, [attempts]);
   useEffect(() => {
-    if (!calendarOpen) return;
-    function dismissCalendar(event) {
-      if (event.type === "keydown" && event.key === "Escape") setCalendarOpen(false);
-      if (event.type === "mousedown" && !calendarPopover.current?.contains(event.target)) setCalendarOpen(false);
+    if (!calendarOpen && !notificationsOpen) return;
+    function dismissPopovers(event) {
+      if (event.type === "keydown" && event.key === "Escape") {
+        setCalendarOpen(false);
+        setNotificationsOpen(false);
+      }
+      if (event.type === "mousedown") {
+        if (calendarOpen && !calendarPopover.current?.contains(event.target)) setCalendarOpen(false);
+        if (notificationsOpen && !notificationsPopover.current?.contains(event.target)) setNotificationsOpen(false);
+      }
     }
-    document.addEventListener("mousedown", dismissCalendar);
-    document.addEventListener("keydown", dismissCalendar);
+    document.addEventListener("mousedown", dismissPopovers);
+    document.addEventListener("keydown", dismissPopovers);
     return () => {
-      document.removeEventListener("mousedown", dismissCalendar);
-      document.removeEventListener("keydown", dismissCalendar);
+      document.removeEventListener("mousedown", dismissPopovers);
+      document.removeEventListener("keydown", dismissPopovers);
     };
-  }, [calendarOpen]);
+  }, [calendarOpen, notificationsOpen]);
   useEffect(() => {
     if (!googleClientId || !googleButton.current) return;
     const renderGoogleButton = () => {
@@ -202,6 +244,7 @@ function App() {
   const studied = lectures.filter((lecture) => lecture.studied).length;
   const completion = percent(studied, lectures.length);
   const matchingLectures = useMemo(() => lectures.filter((lecture) => `${lecture.title} ${lecture.subject} ${lecture.description}`.toLowerCase().includes(search.toLowerCase())), [lectures, search]);
+  const scheduleReminders = useMemo(() => getScheduleReminders(sessions), [sessions]);
   const pageTitle = page === "viewer"
     ? selectedLecture?.title || "My Lectures"
     : page === "quizRun" || page === "quizSetup" || page === "quizOptions" || page === "quizReview"
@@ -400,8 +443,19 @@ function App() {
         </Breadcrumb>
         <div className="top-actions">
           <label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label>
+          <div className="calendar-trigger-wrap" ref={notificationsPopover}>
+            <button type="button" className={`notification-trigger${notificationsOpen ? " is-open" : ""}`} aria-label={scheduleReminders.length ? `Study schedule notifications, ${scheduleReminders.length} upcoming` : "Study schedule notifications"} aria-haspopup="dialog" aria-expanded={notificationsOpen} onClick={() => { setCalendarOpen(false); setNotificationsOpen((open) => !open); }}>
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
+              {scheduleReminders.length > 0 && <span className="notification-badge">{scheduleReminders.length > 9 ? "9+" : scheduleReminders.length}</span>}
+            </button>
+            {notificationsOpen && <div className="notification-popover" role="dialog" aria-label="Study schedule notifications">
+              <div className="notification-popover-head"><strong>Study schedule</strong><span>{scheduleReminders.length ? `${scheduleReminders.length} upcoming` : "No upcoming sessions"}</span></div>
+              {scheduleReminders.length ? <ul className="notification-list">{scheduleReminders.map((session) => <li key={session.id}><button type="button" className={`notification-item tone-${session.tone}`} onClick={() => { setNotificationsOpen(false); go("schedule"); }}><span className="notification-item-time">{fmtTime(session.start)}</span><span className="notification-item-body"><strong>{session.topic}</strong><small>{session.subject} · {session.reminderLabel}</small></span></button></li>)}</ul> : <p className="notification-empty">Nothing scheduled right now. Plan a session so reminders can show up here.</p>}
+              <button type="button" className="text-button notification-footer" onClick={() => { setNotificationsOpen(false); go("schedule"); }}>Open study schedule →</button>
+            </div>}
+          </div>
           <div className="calendar-trigger-wrap" ref={calendarPopover}>
-            <button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => setCalendarOpen((open) => !open)}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>
+            <button type="button" className="date-chip" aria-label="Open calendar" aria-haspopup="dialog" aria-expanded={calendarOpen} onClick={() => { setNotificationsOpen(false); setCalendarOpen((open) => !open); }}><CalendarDays size={13} /><span>{calendarDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span></button>
             {calendarOpen && <div className="calendar-popover" role="dialog" aria-label="Study calendar"><Calendar mode="single" selected={calendarDate} onSelect={(date) => { if (date) setCalendarDate(date); }} /></div>}
           </div>
         </div>

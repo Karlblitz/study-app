@@ -35,8 +35,33 @@
 .calendar-trigger-wrap{position:relative}
 .date-chip{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid #e5eae4;cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s}
 .date-chip:hover,.date-chip[aria-expanded=true]{background:#edf4ed;border-color:#cfdacf}
+.notification-trigger{position:relative;display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid #e5eae4;border-radius:999px;background:#fff;color:#6f7c72;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.notification-trigger svg{width:18px;height:18px}
+.notification-trigger:hover,.notification-trigger.is-open,.notification-trigger[aria-expanded=true]{background:#edf4ed;border-color:#cfdacf;color:#4f8067}
+.notification-badge{position:absolute;top:-2px;right:-2px;min-width:15px;height:15px;padding:0 4px;border:2px solid #fff;border-radius:999px;background:#4d8dff;color:#fff;font-size:8px;font-weight:700;line-height:11px;display:grid;place-items:center}
+.notification-popover{position:absolute;top:calc(100% + 10px);right:0;z-index:30;width:min(340px,calc(100vw - 24px));padding:12px 12px 8px;border:1px solid #e5eae4;border-radius:12px;background:#fff;box-shadow:0 14px 36px rgba(35,52,42,.16);color:#25332c}
+.notification-popover-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:2px 4px 10px;border-bottom:1px solid #edf0eb}
+.notification-popover-head strong{font:700 13px Manrope,sans-serif;letter-spacing:-.03em}
+.notification-popover-head span{color:#8a958c;font-size:10px}
+.notification-list{list-style:none;margin:8px 0 4px;padding:0;display:grid;gap:4px;max-height:min(360px,60vh);overflow:auto}
+.notification-item{width:100%;display:flex;align-items:flex-start;gap:10px;padding:8px;border:0;border-radius:8px;background:transparent;text-align:left;color:inherit;cursor:pointer}
+.notification-item:hover{background:#f5f8f4}
+.notification-item-time{flex:0 0 58px;padding-top:1px;color:#6f7c72;font-size:10px;font-weight:700}
+.notification-item-body{min-width:0;display:grid;gap:3px}
+.notification-item-body strong{font-size:12px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notification-item-body small{color:#8a958c;font-size:10px}
+.notification-item.tone-soon .notification-item-time,.notification-item.tone-live .notification-item-time{color:#4d8dff}
+.notification-empty{margin:12px 4px;color:#8a958c;font-size:11px;line-height:1.55}
+.notification-footer{width:100%;margin-top:2px;padding:8px 4px;text-align:right}
 .calendar-popover{position:absolute;top:calc(100% + 10px);right:0;z-index:30;padding:8px;border:1px solid #e5eae4;border-radius:12px;background:#fff;box-shadow:0 14px 36px rgba(35,52,42,.16);color:#25332c}
 .dark-mode .calendar-popover{background:#1d2420;border-color:#39453c;color:#e0e7e1}
+.dark-mode .notification-trigger{background:#222b24;border-color:#364139;color:#b5c2b7}
+.dark-mode .notification-trigger:hover,.dark-mode .notification-trigger.is-open{background:#26382a;border-color:#435847;color:#b9d6bd}
+.dark-mode .notification-badge{border-color:#1a201c}
+.dark-mode .notification-popover{background:#1d2420;border-color:#39453c;color:#e0e7e1}
+.dark-mode .notification-popover-head{border-color:#303a33}
+.dark-mode .notification-item:hover{background:#263129}
+.dark-mode .notification-item-time,.dark-mode .notification-popover-head span,.dark-mode .notification-item-body small,.dark-mode .notification-empty{color:#9aa79d}
 .dark-mode .calendar-popover button:hover{background:#26382a;color:#e0e7e1}
 @media(max-width:820px){.date-chip{display:inline-flex;height:32px;padding:0 10px}.calendar-popover{top:calc(100% + 8px)}}
 @media(max-width:560px){.date-chip{width:32px;padding:0}.date-chip>span{display:none}}
@@ -105,8 +130,8 @@
 .dark-mode .sidebar::-webkit-scrollbar-thumb:hover{background:#718073}
 .quiz-options-panel{max-width:820px;margin:22px auto;padding:clamp(22px,4vw,40px)}
 .quiz-options-panel h1{margin:7px 0 10px;font-size:clamp(24px,3vw,34px)}
-.quiz-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin:28px 0}
-.quiz-settings-grid label{display:grid;gap:8px;color:var(--ink);font-size:12px;font-weight:600}
+.quiz-settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:28px 0;align-items:start}
+.quiz-settings-grid label{display:grid;grid-template-rows:auto auto 1fr;gap:8px;color:var(--ink);font-size:12px;font-weight:600}
 .quiz-settings-grid select{width:100%;min-height:43px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit}
 .quiz-settings-grid small{color:var(--muted);font-size:11px;font-weight:400;line-height:1.5}
 .quiz-run-panel{max-width:820px;margin:18px auto;padding:clamp(18px,3vw,30px)}
@@ -428,6 +453,9 @@ body{background:#f5f5f5;color:#202020}
 .panel,.stat-card,.lecture-card,.quick-action,.quiz-wrap,.history-panel,.checklist-overview,.checklist-group,.session-card,.schedule-side,.subject-progress,.viewer-panel,.form-panel,.quiz-start-card,.focus-panel,.schedule-panel,.question-builder,.profile-editor{background:#fff;border-color:#e5e5e5;color:#202020;box-shadow:none}
 .study-tip,.search-box,.filter-chip,.quick-icon,.subject-icon,.stat-icon,.file-icon,.quiz-card-icon,.upcoming-date,.calendar-icon,.avatar,.top-avatar,.mobile-menu,.icon-button,.google-placeholder,.auth-divider span,.tip-progress{background:#f0f0f0;border-color:#e5e5e5;color:#737373}
 .date-chip{background:#fff;border-color:#e5e5e5;color:#737373}
+.notification-trigger{background:#fff;border-color:#e5e5e5;color:#737373}
+.notification-popover{background:#fff;border-color:#e5e5e5;color:#202020}
+.notification-item:hover{background:#f5f8ff}
 .button.primary{background:#4d8dff;color:#fff;box-shadow:none}
 .button.primary:hover{background:#3779ed}
 .button.secondary{background:#fff;border-color:#e5e5e5;color:#404040}
@@ -486,7 +514,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .dark-mode .nav-link:hover{background:#242424;color:#f5f5f5}
 .dark-mode .nav-link.active{background:#252b35;color:#f5f5f5}
 .dark-mode .nav-link.active .nav-icon{color:#4d8dff}
-.dark-mode .button.secondary,.dark-mode .date-chip{background:#1a1a1a;border-color:#2a2a2a;color:#d0d0d0}
+.dark-mode .button.secondary,.dark-mode .date-chip,.dark-mode .notification-trigger{background:#1a1a1a;border-color:#2a2a2a;color:#d0d0d0}
 .dark-mode .button.secondary:hover,.dark-mode .icon-button:hover{background:#242424;border-color:#414141}
 .dark-mode .filter-chip.selected,.dark-mode .status.complete{background:#252b35;border-color:#385783;color:#9bc0ff}
 .dark-mode .status.upcoming,.dark-mode .status.pending,.dark-mode .quiz-choice-letter{background:#242424;color:#8a8a8a}
@@ -501,8 +529,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .dark-mode .lecture-summary{border-left-color:#4d8dff}
 .dark-mode .summary-content,.dark-mode .summary-content h3,.dark-mode .summary-content strong{color:#f5f5f5}
 .dark-mode .summary-content code{background:#303030}
-.dark-mode .calendar-popover{background:#1a1a1a;border-color:#2a2a2a;color:#f5f5f5}
+.dark-mode .calendar-popover,.dark-mode .notification-popover{background:#1a1a1a;border-color:#2a2a2a;color:#f5f5f5}
 .dark-mode .calendar-popover button:hover{background:#242424;color:#f5f5f5}
+.dark-mode .notification-badge{border-color:#1a1a1a}
+.dark-mode .notification-trigger:hover,.dark-mode .notification-trigger.is-open{background:#242424;border-color:#414141;color:#9bc0ff}
+.dark-mode .notification-item:hover{background:#242424}
+.dark-mode .notification-popover-head{border-color:#2a2a2a}
+.dark-mode .notification-item-time,.dark-mode .notification-popover-head span,.dark-mode .notification-item-body small,.dark-mode .notification-empty{color:#8a8a8a}
 .dark-mode .calendar-popover [data-selected-single="true"]{background:#4d8dff!important;color:#fff!important;box-shadow:0 0 0 3px #4d8dff44,0 0 14px #4d8dff66}
 .dark-mode .viewer-size-controls,.dark-mode .profile-form-grid input[readonly]{background:#242424;border-color:#2a2a2a}
 .dark-mode .viewer-size-controls button:hover,.dark-mode .viewer-size-controls button.selected{background:#252b35;border-color:#385783;color:#9bc0ff}
@@ -521,13 +554,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .dark-mode .auth-error,.dark-mode .quiz-review-reminder,.dark-mode .delete-text,.dark-mode .profile-form-error{color:#b0b0b0;border-color:#2a2a2a;background:#242424}
 
 /* Give icon controls the same clear blue hover, focus, and selected feedback. */
-.icon-button,.quick-icon,.nav-icon,.row-arrow,.theme-icon,.calendar-trigger-wrap button svg{transition:color .16s ease,background-color .16s ease,border-color .16s ease}
+.icon-button,.quick-icon,.nav-icon,.row-arrow,.theme-icon,.calendar-trigger-wrap button svg,.notification-trigger svg{transition:color .16s ease,background-color .16s ease,border-color .16s ease}
 .icon-button:hover,.icon-button:focus-visible,.icon-button:active{color:#4d8dff;border-color:#4d8dff;background:#eaf1ff}
 .nav-link:hover .nav-icon,.nav-link:focus-visible .nav-icon,.nav-link.active .nav-icon{color:#4d8dff}
 .quick-action:hover .quick-icon,.quick-action:focus-visible .quick-icon{background:#eaf1ff;border-color:#bed3ff;color:#4d8dff}
 .recent-row:hover .row-arrow,.recent-row:focus-visible .row-arrow{color:#4d8dff}
 .date-chip:hover,.date-chip:focus-visible{border-color:#4d8dff;color:#286bd8}
 .date-chip:hover svg,.date-chip:focus-visible svg{color:#4d8dff}
+.notification-trigger:hover,.notification-trigger:focus-visible,.notification-trigger.is-open{border-color:#4d8dff;color:#286bd8}
+.notification-trigger:hover svg,.notification-trigger:focus-visible svg,.notification-trigger.is-open svg{color:#4d8dff}
 .calendar-popover button:hover,.calendar-popover button:focus-visible{color:#4d8dff}
 .quiz-option.selected .quiz-choice-letter,.quiz-option.correct .quiz-choice-letter{background:#4d8dff;color:#fff}
 .quiz-option.incorrect .quiz-choice-letter{background:#737373;color:#fff}
@@ -535,6 +570,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .dark-mode .icon-button:hover,.dark-mode .icon-button:focus-visible,.dark-mode .icon-button:active{color:#79aaff;border-color:#4d8dff;background:#252b35}
 .dark-mode .quick-action:hover .quick-icon,.dark-mode .quick-action:focus-visible .quick-icon{background:#252b35;border-color:#385783;color:#79aaff}
 .dark-mode .date-chip:hover,.dark-mode .date-chip:focus-visible{border-color:#4d8dff;color:#9bc0ff}
+.dark-mode .notification-trigger:hover,.dark-mode .notification-trigger:focus-visible,.dark-mode .notification-trigger.is-open{border-color:#4d8dff;color:#9bc0ff}
 .dark-mode .calendar-popover button:hover,.dark-mode .calendar-popover button:focus-visible{color:#79aaff}
 .dark-mode .quiz-option.selected .quiz-choice-letter,.dark-mode .quiz-option.correct .quiz-choice-letter{background:#4d8dff;color:#fff}
 .dark-mode .quiz-option.incorrect .quiz-choice-letter{background:#666;color:#fff}
