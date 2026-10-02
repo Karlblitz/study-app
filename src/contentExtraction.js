@@ -1,10 +1,11 @@
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 function extensionOf(name = "") { return name.split(".").pop()?.toLowerCase() || ""; }
 
 export async function extractLectureText(file, fileName = file.name, fileType = file.type) {
   const extension = extensionOf(fileName);
   if (extension === "pdf" || fileType === "application/pdf") {
     const pdfjs = await import("pdfjs-dist");
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
     const document = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
     const pages = [];
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {

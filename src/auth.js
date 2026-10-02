@@ -1,50 +1,89 @@
-const USERS_KEY = "studyspace-users";
-const HASH_ITERATIONS = 310000;
-const encoder = new TextEncoder();
+import {
+  GoogleAuthProvider,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  createUserWithEmailAndPassword,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import { auth, db } from "./firebase.js";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
-function getUsers() {
-  try { return JSON.parse(localStorage.getItem(USERS_KEY) || "[]"); }
-  catch { return []; }
+function getAuthInstance() {
+  if (!auth) throw new Error("Firebase is not configured. Replace the placeholders in the project-root .env.local with your Firebase Web App values, then restart Vite.");
+  return auth;
 }
 
-function toBase64(bytes) {
-  let binary = "";
-  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary);
+async function useSessionPersistence() {
+  await setPersistence(getAuthInstance(), browserSessionPersistence);
 }
 
-async function hashPassword(password, salt) {
-  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt, iterations: HASH_ITERATIONS, hash: "SHA-256" }, key, 256);
-  return toBase64(new Uint8Array(bits));
+export async function createFirebaseAccount({ name, email, password }) {
+  await useSessionPersistence();
+
+  const credential = await createUserWithEmailAndPassword(
+    getAuthInstance(),
+    email.trim(),
+    password
+  );
+
+  const user = credential.user;
+
+  await updateProfile(user, { displayName: name.trim() });
+
+  await setDoc(doc(db, "users", user.uid), {
+    name: name.trim(),
+    email: user.email,
+    createdAt: serverTimestamp(),
+  });
+
+  return user;
 }
 
-export async function createLocalAccount({ name, email, password }) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const users = getUsers();
-  if (users.some((user) => user.email === normalizedEmail)) throw new Error("An account with this email already exists. Sign in instead.");
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const passwordHash = await hashPassword(password, salt);
-  users.push({ name: name.trim(), email: normalizedEmail, salt: toBase64(salt), passwordHash });
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  return { name: name.trim(), email: normalizedEmail, source: "local" };
+export async function signInFirebaseAccount({ email, password }) {
+  await useSessionPersistence();
+  const credential = await signInWithEmailAndPassword(getAuthInstance(), email.trim(), password);
+  return credential.user;
 }
 
-export async function signInLocalAccount({ email, password }) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const account = getUsers().find((user) => user.email === normalizedEmail);
-  if (!account) throw new Error("No account was found for this email. Create an account first.");
-  const salt = Uint8Array.from(atob(account.salt), (character) => character.charCodeAt(0));
-  const enteredHash = await hashPassword(password, salt);
-  if (enteredHash !== account.passwordHash) throw new Error("The email or password is incorrect.");
-  return { name: account.name, email: account.email, source: "local" };
+export async function signInWithGoogle() {
+  const provider = new GoogleAuthProvider();
+  await useSessionPersistence();
+  const credential = await signInWithPopup(getAuthInstance(), provider);
+  return credential.user;
 }
 
-export function updateLocalAccountName(email, name) {
-  const normalizedEmail = email.trim().toLowerCase();
-  const users = getUsers();
-  const account = users.find((user) => user.email === normalizedEmail);
-  if (!account) return;
-  account.name = name.trim();
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+export async function setFirebasePersistence(rememberUser) {
+  await setPersistence(
+    getAuthInstance(),
+    rememberUser ? browserLocalPersistence : browserSessionPersistence,
+  );
+}
+
+export async function signOutFirebaseUser() {
+  await signOut(getAuthInstance());
+}
+
+export async function updateFirebaseDisplayName(name) {
+  const currentUser = getAuthInstance().currentUser;
+  if (!currentUser) throw new Error("You need to be signed in to update your profile.");
+  await updateProfile(currentUser, { displayName: name.trim() });
+}
+
+export function getAuthErrorMessage(error) {
+  const messages = {
+    "auth/email-already-in-use": "An account with this email already exists. Sign in instead.",
+    "auth/invalid-credential": "The email or password is incorrect.",
+    "auth/invalid-email": "Enter a valid email address.",
+    "auth/operation-not-allowed": "This sign-in method is not enabled in Firebase Authentication.",
+    "auth/popup-closed-by-user": "The Google sign-in window was closed before completing sign-in.",
+    "auth/popup-blocked": "Your browser blocked the Google sign-in window. Allow pop-ups and try again.",
+    "auth/too-many-requests": "Too many attempts were made. Wait a moment and try again.",
+    "auth/weak-password": "Use a stronger password with at least 6 characters.",
+    "auth/network-request-failed": "Could not reach Firebase Authentication. Check your connection and try again.",
+  };
+  return messages[error?.code] || error?.message || "Could not complete sign-in. Please try again.";
 }

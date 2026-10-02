@@ -3,8 +3,35 @@ import katex from "katex";
 import "katex/dist/katex.min.css";
 import questionSets from "./questions.js";
 import { extractLectureText } from "./contentExtraction.js";
-import { generateQuestionsFromText } from "./quizGenerator.js";
-import { createLocalAccount, signInLocalAccount, updateLocalAccountName } from "./auth.js";
+import {
+  DEFAULT_QUIZ_SETTINGS,
+  getUniqueValidQuestions,
+  getQuizProgress,
+  getQuizQuestionIndex,
+  scoreQuizQuestions,
+  selectQuizQuestions,
+  validateGeneratedQuiz,
+  validateQuizSettings,
+} from "./quizGenerator.js";
+import {
+  createFirebaseAccount,
+  getAuthErrorMessage,
+  setFirebasePersistence,
+  signInFirebaseAccount,
+  signInWithGoogle,
+  signOutFirebaseUser,
+  updateFirebaseDisplayName,
+} from "./auth.js";
+import { auth, firebaseConfigured, missingFirebaseConfig } from "./firebase.js";
+import {
+  createUserRecord,
+  deleteUserRecord,
+  saveUserProfile,
+  subscribeToUserProfile,
+  subscribeToUserRecords,
+  updateUserRecord,
+} from "./firestore.js";
+import { onAuthStateChanged } from "firebase/auth";
 import { Eye, EyeOff, FileText, FileVideo, X } from "lucide-react";
 import { CalendarDays, Moon, Sun } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
@@ -36,19 +63,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Plus } from "lucide-react";
-const seedLectures = [
-  { id: "l1", subject: "Microbiology", title: "Antimicrobial Susceptibility Testing", description: "Disk diffusion, MIC, and interpretation of susceptibility results.", studied: true, dateAdded: "2026-09-23", fileName: "", fileType: "", fileData: "", questions: questionSets["Antimicrobial Susceptibility Testing"] },
-  { id: "l2", subject: "Clinical Chemistry", title: "Liver Function Tests", description: "Markers of liver injury, cholestasis, and synthetic function.", studied: true, dateAdded: "2026-09-22", fileName: "", fileType: "", fileData: "", questions: questionSets["Liver Function Tests"] },
-  { id: "l3", subject: "Hematology", title: "RBC Morphology", description: "Recognizing red cell size, shape, and color changes.", studied: false, dateAdded: "2026-09-21", fileName: "", fileType: "", fileData: "", questions: questionSets["RBC Morphology"] },
-  { id: "l4", subject: "Microbiology", title: "Culture Media", description: "Common media and the organisms they help identify.", studied: false, dateAdded: "2026-09-20", fileName: "", fileType: "", fileData: "", questions: questionSets["Culture Media"] },
-  { id: "l5", subject: "Immunology", title: "Antigen and Antibody Reactions", description: "A review of binding, agglutination, and precipitation.", studied: false, dateAdded: "2026-09-19", fileName: "", fileType: "", fileData: "", questions: questionSets["Antigen and Antibody Reactions"] },
-];
 const today = () => new Date().toISOString().slice(0, 10);
-const initialSessions = [
-  { id: "s1", subject: "Microbiology", topic: "Antimicrobial Susceptibility Testing", date: today(), start: "09:00", end: "10:00", notes: "Review disk diffusion and MIC", completed: false },
-  { id: "s2", subject: "Clinical Chemistry", topic: "Liver Function Tests", date: today(), start: "14:00", end: "15:00", notes: "", completed: false },
-  { id: "s3", subject: "Hematology", topic: "RBC Morphology", date: new Date(Date.now() + 86400000).toISOString().slice(0, 10), start: "10:00", end: "11:00", notes: "", completed: false },
-];
 const navItems = [["home", "home", "Dashboard"], ["lectures", "▤", "My Lectures"], ["checklist", "✓", "Study Checklist"], ["schedule", "▦", "Study Schedule"], ["quizzes", "▧", "Quizzes"], ["progress", "◔", "Progress"]];
 
 function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
@@ -77,7 +92,17 @@ function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
     </SidebarGroupContent>
   </SidebarGroup>;
 }
-const readStore = (key, fallback) => { try { const value = localStorage.getItem(key); return value ? JSON.parse(value) : fallback; } catch { return fallback; } };
+const localResourceKey = (uid) => `studyspace-resources:${uid}`;
+function readLocalResources(uid) {
+  const saved = localStorage.getItem(localResourceKey(uid));
+  return saved ? JSON.parse(saved) : {};
+}
+function saveLocalResource(uid, lecture) {
+  if (!lecture.fileData) return;
+  const resources = readLocalResources(uid);
+  resources[lecture.id] = { fileName: lecture.fileName, fileType: lecture.fileType, fileData: lecture.fileData };
+  localStorage.setItem(localResourceKey(uid), JSON.stringify(resources));
+}
 const fmtDate = (date, options = { month: "long", day: "numeric", year: "numeric" }) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, options);
 const fmtTime = (time) => { if (!time) return ""; const [h, m] = time.split(":").map(Number); return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`; };
 function minutesFromClock(time) {
@@ -151,7 +176,7 @@ const answerMatches = (question, answer) => Array.isArray(question.correctAnswer
   : question.correctAnswer === answer;
 const answerText = (answer) => Array.isArray(answer) ? answer.join(", ") : answer || "No answer";
 function getLectureQuestions(lecture) {
-  if (lecture.quizSource === "custom" && lecture.questions?.length) return lecture.questions;
+  if ((lecture.quizSource === "custom" || lecture.quizSource === "generated") && lecture.questions?.length) return lecture.questions;
   const title = lecture.title?.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const questionSetTitle = title === "conic equations"
     ? "Equations of Conic- Quarter 1_Module 5"
@@ -161,37 +186,163 @@ function getLectureQuestions(lecture) {
   return [];
 }
 
+function adaptQuizQuestion(question, mode, lectureTitle) {
+  if (mode === "True / False") {
+    const wrongOptions = (question.options || []).filter((option) => option !== question.correctAnswer);
+    const truth = Math.random() >= 0.5 || !wrongOptions.length;
+    const proposed = truth ? question.correctAnswer : wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
+    return {
+      ...question,
+      type: mode,
+      question: `True or False? “${proposed}” correctly answers: ${question.question}`,
+      options: ["True", "False"],
+      correctAnswer: truth ? "True" : "False",
+      explanation: `For “${question.question}”, the lecture’s correct answer is “${question.correctAnswer}”.`,
+    };
+  }
+  if (mode === "Multi-select") {
+    const correctAnswer = (question.options || []).filter((option) => option !== question.correctAnswer);
+    return {
+      ...question,
+      type: mode,
+      question: `Select every option that does NOT correctly answer: ${question.question}`,
+      correctAnswer,
+      explanation: `Only “${question.correctAnswer}” answers the lecture question correctly. The remaining choices are distractors.`,
+    };
+  }
+  if (mode === "Problem solving") {
+    return { ...question, type: mode, question: `Apply the lecture concept to this problem: ${question.question}` };
+  }
+  return { ...question, type: "Multiple choice" };
+}
+
 function App() {
   const [isStarting, setIsStarting] = useState(true);
-  const [theme, setTheme] = useState(() => readStore("studyspace-theme", "light"));
-  const [profile, setProfile] = useState(() => readStore("studyspace-profile", null));
+  const [theme, setTheme] = useState("light");
+  const [profile, setProfile] = useState(null);
+  const [cloudError, setCloudError] = useState("");
   const [profileEditorOpen, setProfileEditorOpen] = useState(false);
   const [authChoice, setAuthChoice] = useState(null);
   const [page, setPage] = useState("home");
-  const [lectures, setLectures] = useState(() => readStore("studyspace-lectures", seedLectures));
-  const [sessions, setSessions] = useState(() => readStore("studyspace-sessions", initialSessions));
-  const [attempts, setAttempts] = useState(() => readStore("studyspace-attempts", []));
+  const [lectures, setLectures] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [attempts, setAttempts] = useState([]);
+  const [savedQuizzes, setSavedQuizzes] = useState([]);
   const [search, setSearch] = useState("");
   const [selectedLecture, setSelectedLecture] = useState(null);
   const [quizState, setQuizState] = useState(null);
+  const [quizSetupCount, setQuizSetupCount] = useState(null);
+  const [quizSetupSettings, setQuizSetupSettings] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [calendarDate, setCalendarDate] = useState(() => new Date());
   const [toast, setToast] = useState("");
+  const [quizGenerationError, setQuizGenerationError] = useState("");
   const [generatingLectureId, setGeneratingLectureId] = useState(null);
   const [summarizingLectureId, setSummarizingLectureId] = useState(null);
-  const googleButton = useRef(null);
   const calendarPopover = useRef(null);
   const notificationsPopover = useRef(null);
-  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const quizGenerationLock = useRef(false);
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsStarting(false), 350);
-    return () => window.clearTimeout(timer);
+    if (!firebaseConfigured || !auth) {
+      setIsStarting(false);
+      return;
+    }
+    let dataUnsubscribers = [];
+    const stopAuthListener = onAuthStateChanged(auth, (user) => {
+      dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
+      dataUnsubscribers = [];
+      setLectures([]);
+      setSessions([]);
+      setAttempts([]);
+      setSavedQuizzes([]);
+      setSelectedLecture(null);
+
+      if (!user) {
+        setProfile(null);
+        setAuthChoice(null);
+        setIsStarting(false);
+        return;
+      }
+
+      setProfile({ uid: user.uid, name: user.displayName || user.email || "Student", email: user.email || "", theme: "light", timeFormat: "12h" });
+      setIsStarting(true);
+      const pending = new Set(["lectures", "sessions", "quiz attempts", "saved quizzes", "profile"]);
+      let profileInitialized = false;
+      const markLoaded = (collectionName) => {
+        pending.delete(collectionName);
+        if (!pending.size) setIsStarting(false);
+      };
+      const loadFailed = (collectionName, error) => {
+        reportCloudError(`Could not load ${collectionName}`, error);
+        markLoaded(collectionName);
+      };
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "lectures", (records) => {
+        let resources = {};
+        try {
+          resources = readLocalResources(user.uid);
+        } catch (error) {
+          reportCloudError("Could not read locally cached resource files", error);
+        }
+        const hydrated = records.map((record) => ({ ...record, fileData: resources[record.id]?.fileData || "" }));
+        setLectures(hydrated);
+        setSelectedLecture((current) => current ? hydrated.find((lecture) => lecture.id === current.id) || current : current);
+        markLoaded("lectures");
+      }, (error) => loadFailed("lectures", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "sessions", (records) => {
+        setSessions(records);
+        markLoaded("sessions");
+      }, (error) => loadFailed("sessions", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "quizAttempts", (records) => {
+        setAttempts(records);
+        markLoaded("quiz attempts");
+      }, (error) => loadFailed("quiz attempts", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "quizzes", (records) => {
+        setSavedQuizzes(records);
+        markLoaded("saved quizzes");
+      }, (error) => loadFailed("saved quizzes", error)));
+
+      dataUnsubscribers.push(subscribeToUserProfile(user.uid, (savedProfile) => {
+        if (savedProfile) {
+          const nextProfile = {
+            uid: user.uid,
+            name: user.displayName || user.email || "Student",
+            email: user.email || "",
+            theme: "light",
+            timeFormat: "12h",
+            ...savedProfile,
+          };
+          setProfile(nextProfile);
+          if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
+        } else {
+          const defaults = {
+            name: user.displayName || user.email || "Student",
+            email: user.email || "",
+            theme: "light",
+            timeFormat: "12h",
+          };
+          setProfile({ uid: user.uid, ...defaults });
+          if (!profileInitialized) {
+            profileInitialized = true;
+            saveUserProfile(user.uid, defaults).catch((error) => reportCloudError("Could not initialize your profile", error));
+          }
+        }
+        markLoaded("profile");
+      }, (error) => loadFailed("profile", error)));
+    }, (error) => {
+      reportCloudError("Could not check your Firebase sign-in", error);
+      setIsStarting(false);
+    });
+
+    return () => {
+      stopAuthListener();
+      dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
   }, []);
-  useEffect(() => { localStorage.setItem("studyspace-theme", JSON.stringify(theme)); }, [theme]);
-  useEffect(() => { localStorage.setItem("studyspace-lectures", JSON.stringify(lectures)); }, [lectures]);
-  useEffect(() => { localStorage.setItem("studyspace-sessions", JSON.stringify(sessions)); }, [sessions]);
-  useEffect(() => { localStorage.setItem("studyspace-attempts", JSON.stringify(attempts)); }, [attempts]);
   useEffect(() => {
     if (!calendarOpen && !notificationsOpen) return;
     function dismissPopovers(event) {
@@ -211,36 +362,6 @@ function App() {
       document.removeEventListener("keydown", dismissPopovers);
     };
   }, [calendarOpen, notificationsOpen]);
-  useEffect(() => {
-    if (!googleClientId || !googleButton.current) return;
-    const renderGoogleButton = () => {
-      if (!window.google?.accounts?.id || !googleButton.current || googleButton.current.dataset.rendered) return;
-      window.google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: ({ credential }) => {
-          try {
-            const encoded = credential.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-            const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
-            const payload = JSON.parse(new TextDecoder().decode(bytes));
-            googleLogin(payload.name || "Student", payload.email || "");
-          } catch { notify("Google sign-in could not read the account response"); }
-        },
-      });
-      window.google.accounts.id.renderButton(googleButton.current, { theme: "outline", size: "large", shape: "pill", text: "continue_with", width: 320 });
-      googleButton.current.dataset.rendered = "true";
-    };
-    if (window.google?.accounts?.id) { renderGoogleButton(); return; }
-    let script = document.querySelector("script[data-studyspace-google]");
-    if (!script) {
-      script = document.createElement("script");
-      script.src = "https://accounts.google.com/gsi/client";
-      script.async = true;
-      script.dataset.studyspaceGoogle = "true";
-      document.head.appendChild(script);
-    }
-    script.addEventListener("load", renderGoogleButton);
-    return () => script.removeEventListener("load", renderGoogleButton);
-  }, [googleClientId, profile]);
   const studied = lectures.filter((lecture) => lecture.studied).length;
   const completion = percent(studied, lectures.length);
   const matchingLectures = useMemo(() => lectures.filter((lecture) => `${lecture.title} ${lecture.subject} ${lecture.description}`.toLowerCase().includes(search.toLowerCase())), [lectures, search]);
@@ -253,130 +374,331 @@ function App() {
   const breadcrumbParent = page === "viewer" ? "My Lectures" : page.startsWith("quiz") ? "Quizzes" : "Workspace";
 
   function notify(message) { setToast(message); window.setTimeout(() => setToast(""), 2400); }
+  function reportCloudError(action, error) {
+    console.error(`[Studyspace] ${action}`, error);
+    const message = `${action}: ${error?.message || "Unknown Firebase error"}`;
+    setCloudError(message);
+    notify(message);
+  }
+  function currentUid() {
+    const uid = auth?.currentUser?.uid;
+    if (!uid) throw new Error("Sign in before saving study data.");
+    return uid;
+  }
+  async function persistLecture(lecture, isNew = false) {
+    const uid = currentUid();
+    try {
+      saveLocalResource(uid, lecture);
+    } catch (error) {
+      reportCloudError("Lecture metadata will sync, but its local file preview could not be cached", error);
+    }
+    const metadata = { ...lecture };
+    delete metadata.fileData;
+    if (isNew) await createUserRecord(uid, "lectures", metadata);
+    else await updateUserRecord(uid, "lectures", lecture.id, metadata);
+  }
   function go(next) { setPage(next); setSelectedLecture(null); setQuizState(null); }
   function navigate(next) {
     if (page === "quizRun" && quizState && !quizState.done && !window.confirm("Leave this quiz? Your current answers will be lost.")) return;
     go(next);
   }
-  function toggleStudied(id) { setLectures((items) => items.map((item) => item.id === id ? { ...item, studied: !item.studied } : item)); }
-  function saveLecture(form) {
-    setLectures((items) => [{ ...form, id: crypto.randomUUID(), studied: false, dateAdded: today(), questions: [], quizSource: "none" }, ...items]);
-    setPage("lectures"); notify("Lecture added to your library");
-  }
-  function saveSession(form) {
-    setSessions((items) => [{ ...form, id: crypto.randomUUID(), completed: false }, ...items]);
-    notify("Study session scheduled");
-  }
-  async function startQuiz(lecture, settings = { difficulty: "Medium", count: 5, type: "Multiple choice" }, excludedIds = []) {
-    let qs = getLectureQuestions(lecture);
-    setSelectedLecture(lecture);
-    if (!qs.length) {
-      setGeneratingLectureId(lecture.id);
-      try {
-        let material = lecture.lectureContent || "";
-        if (!material && lecture.fileData) {
-          const file = await fetch(lecture.fileData).then((response) => response.blob());
-          material = await extractLectureText(file, lecture.fileName, lecture.fileType);
-        }
-        qs = generateQuestionsFromText(material, lecture.title);
-        const updated = { ...lecture, lectureContent: material.slice(0, 90000), questions: qs, quizSource: "generated" };
-        setLectures((items) => items.map((item) => item.id === lecture.id ? updated : item));
-        setSelectedLecture(updated);
-        if (!qs.length) {
-          setQuizState(null); setPage("quizSetup");
-          notify("I couldn't find enough clear definitions to build grounded questions. Add fuller notes or create questions manually.");
-          return;
-        }
-      } catch (error) {
-        notify(error.message || "Could not read this lecture file");
-        setQuizState(null); setPage("quizSetup");
-        return;
-      } finally { setGeneratingLectureId(null); }
+  async function toggleStudied(id) {
+    const lecture = lectures.find((item) => item.id === id);
+    if (!lecture) return;
+    const updated = { ...lecture, studied: !lecture.studied };
+    try {
+      await persistLecture(updated);
+      setLectures((items) => items.map((item) => item.id === id ? updated : item));
+    } catch (error) {
+      reportCloudError("Could not update lecture progress", error);
     }
-    let pool = qs.map((question, index) => ({
-      ...question,
-      id: question.id || `${lecture.id}-${index}`,
-      topic: question.topic || lecture.title,
-      difficulty: settings.difficulty,
-      type: settings.type,
-      correctAnswer: question.correctAnswer ?? question.answer,
-      hint: question.hint || `Recall the key definition or relationship from ${lecture.title}. Compare the choices before deciding.`,
-      explanation: question.explanation || `The lecture question’s correct answer is “${question.correctAnswer ?? question.answer}.” Review this idea in ${lecture.title}.`,
-    }));
-    const adaptQuestion = (question, mode) => {
-      if (mode === "True / False") {
-      const wrongOptions = (question.options || []).filter((option) => option !== question.correctAnswer);
-      const truth = Math.random() >= 0.5 || !wrongOptions.length;
-      const proposed = truth ? question.correctAnswer : wrongOptions[Math.floor(Math.random() * wrongOptions.length)];
-      return { ...question, type: mode, question: `True or False? “${proposed}” correctly answers: ${question.question}`, options: ["True", "False"], correctAnswer: truth ? "True" : "False", explanation: `For “${question.question}”, the lecture’s correct answer is “${question.correctAnswer}”.` };
-      }
-      if (mode === "Multi-select") {
-        const correctAnswer = (question.options || []).filter((option) => option !== question.correctAnswer);
-        return { ...question, type: mode, question: `Select every option that does NOT correctly answer: ${question.question}`, correctAnswer, explanation: `Only “${question.correctAnswer}” answers the lecture question correctly. The remaining choices are distractors.` };
-      }
-      if (mode === "Problem solving") return { ...question, type: mode, question: `Apply the lecture concept to this problem: ${question.question}` };
-      return { ...question, type: "Multiple choice" };
-    };
-    pool = pool.map((question) => {
-      const mode = settings.type === "Mixed"
-        ? ["Multiple choice", "True / False", "Multi-select", "Problem solving"][Math.floor(Math.random() * 4)]
-        : settings.type;
-      return adaptQuestion(question, mode);
-    });
-    const unseen = pool.filter((question) => !excludedIds.includes(question.id));
-    if (excludedIds.length && !unseen.length) { notify("You’ve practiced every unique question for this lecture. Add more questions or notes for a fresh quiz."); return; }
-    const shuffled = [...(excludedIds.length ? unseen : pool)].sort(() => Math.random() - 0.5);
-    const selected = shuffled.slice(0, settings.count).map((question) => ({ ...question, options: [...(question.options || [])].sort(() => Math.random() - 0.5) }));
-    setQuizState({ questions: selected, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config: settings, startedAt: Date.now(), pastQuestionIds: [...new Set([...excludedIds, ...selected.map((question) => question.id)])] });
-    setPage("quizRun");
-    if (selected.length < settings.count) notify(`This lecture has ${selected.length} grounded question${selected.length === 1 ? "" : "s"}; the quiz will use all of them.`);
   }
-  function saveCustomQuestions(questions) {
-    const updated = { ...selectedLecture, questions, quizSource: "custom" };
-    setLectures((items) => items.map((item) => item.id === updated.id ? updated : item));
-    setSelectedLecture(updated);
-    const prepared = questions.map((question, index) => ({ ...question, id: question.id || `${updated.id}-custom-${index}`, topic: updated.title, correctAnswer: question.correctAnswer ?? question.answer, difficulty: "Medium", type: "Multiple choice", hint: question.hint || `Recall the main idea from ${updated.title}.`, explanation: question.explanation || `The correct answer is “${question.correctAnswer ?? question.answer}.” Review this concept in ${updated.title}.` }));
-    setQuizState({ questions: prepared, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config: { difficulty: "Medium", count: prepared.length, type: "Multiple choice" }, startedAt: Date.now() });
-    setPage("quizRun");
+  async function saveLecture(form) {
+    const lecture = { ...form, id: crypto.randomUUID(), studied: false, dateAdded: today(), questions: [], quizSource: "none" };
+    try {
+      await persistLecture(lecture, true);
+      setLectures((items) => [lecture, ...items.filter((item) => item.id !== lecture.id)]);
+      setPage("lectures");
+      notify("Lecture added to your library");
+    } catch (error) {
+      reportCloudError("Could not save lecture", error);
+    }
   }
-  function customizeQuiz(lecture) { setSelectedLecture(lecture); setQuizState(null); setPage("quizSetup"); }
-  function openQuizOptions(lecture) { setSelectedLecture(lecture); setQuizState(null); setPage("quizOptions"); }
+  async function saveSession(form) {
+    const session = { ...form, id: crypto.randomUUID(), completed: false };
+    try {
+      await createUserRecord(currentUid(), "sessions", session);
+      setSessions((items) => [session, ...items.filter((item) => item.id !== session.id)]);
+      notify("Study session scheduled");
+      return true;
+    } catch (error) {
+      reportCloudError("Could not save study session", error);
+      return false;
+    }
+  }
+  async function updateSession(id, updates) {
+    const session = sessions.find((item) => item.id === id);
+    if (!session) return;
+    const updated = { ...session, ...updates };
+    try {
+      await updateUserRecord(currentUid(), "sessions", id, updated);
+      setSessions((items) => items.map((item) => item.id === id ? updated : item));
+      return true;
+    } catch (error) {
+      reportCloudError("Could not update study session", error);
+      return false;
+    }
+  }
+  async function deleteSession(id) {
+    try {
+      await deleteUserRecord(currentUid(), "sessions", id);
+      setSessions((items) => items.filter((item) => item.id !== id));
+      return true;
+    } catch (error) {
+      reportCloudError("Could not delete study session", error);
+      return false;
+    }
+  }
+  async function startQuiz(lecture, settings = DEFAULT_QUIZ_SETTINGS) {
+    if (quizGenerationLock.current) return;
+    quizGenerationLock.current = true;
+    setGeneratingLectureId(lecture.id);
+    setQuizGenerationError("");
+    setSelectedLecture(lecture);
+    try {
+      const config = validateQuizSettings(settings);
+      let material = lecture.lectureContent?.trim() || "";
+      if (material.length < 80 && lecture.summary?.trim()) {
+        material = [material, lecture.summary.trim()].filter(Boolean).join("\n\n");
+      }
+      if (material.length < 80 && lecture.fileData && !lecture.fileType?.startsWith("video/")) {
+        const response = await fetch(lecture.fileData);
+        if (!response.ok) throw new Error("Could not read the saved lecture file. Reattach the file or add its notes.");
+        const file = await response.blob();
+        const extracted = await extractLectureText(file, lecture.fileName, lecture.fileType);
+        material = [material, extracted].filter(Boolean).join("\n\n");
+      }
+      if (material.length < 80 && lecture.description?.trim()) {
+        material = [material, lecture.description.trim()].filter(Boolean).join("\n\n");
+      }
+      if (material.length < 80) {
+        const questionSource = getLectureQuestions(lecture).map((question) => [
+          question.question,
+          `Choices: ${question.options.join("; ")}`,
+          `Correct answer: ${answerText(question.correctAnswer ?? question.answer)}`,
+        ].join("\n")).join("\n\n");
+        material = [material, questionSource].filter(Boolean).join("\n\n");
+      }
+      if (material.trim().length < 80) {
+        throw new Error("Add at least 80 characters of lecture notes, a transcript, or lecture-specific questions before generating a quiz.");
+      }
+
+      const response = await fetch("/api/generate-quiz", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: material.slice(0, 120000),
+          title: lecture.title,
+          subject: lecture.subject,
+          ...config,
+        }),
+      });
+      let result;
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error("The quiz service returned an invalid response. Check that the Python Gemini service is running.");
+      }
+      if (!response.ok) throw new Error(result.error || "The quiz could not be generated. Try again.");
+
+      const questions = validateGeneratedQuiz(result.questions, config);
+      const savedQuiz = {
+        id: crypto.randomUUID(),
+        lectureId: lecture.id,
+        title: lecture.title,
+        subject: lecture.subject,
+        config,
+        questions,
+        createdAt: new Date().toISOString(),
+      };
+      await createUserRecord(currentUid(), "quizzes", savedQuiz);
+      setSavedQuizzes((items) => [savedQuiz, ...items.filter((item) => item.id !== savedQuiz.id)]);
+      setQuizState({
+        questions,
+        index: 0,
+        answers: {},
+        submitted: {},
+        hints: {},
+        done: false,
+        config,
+        startedAt: Date.now(),
+        savedQuizId: savedQuiz.id,
+      });
+      setPage("quizRun");
+    } catch (error) {
+      const message = error.message || "Could not generate this quiz.";
+      setQuizGenerationError(message);
+      notify(message);
+    } finally {
+      quizGenerationLock.current = false;
+      setGeneratingLectureId(null);
+    }
+  }
+  async function saveCustomQuestions(questions, requestedCount = null) {
+    const validQuestions = getUniqueValidQuestions(questions);
+    const count = requestedCount || validQuestions.length;
+    if (validQuestions.length < count) {
+      notify(`Add ${count - validQuestions.length} more valid, distinct question${count - validQuestions.length === 1 ? "" : "s"} before starting.`);
+      return;
+    }
+    const updated = { ...selectedLecture, questions: validQuestions, quizSource: "custom" };
+    try {
+      await persistLecture(updated);
+      setLectures((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setSelectedLecture(updated);
+      const settings = requestedCount
+        ? quizSetupSettings || { difficulty: "Medium", count, type: "Multiple choice" }
+        : { difficulty: "Medium", count, type: "Multiple choice" };
+      const { questions: selected } = selectQuizQuestions(validQuestions, count);
+      const prepared = selected.map((question) => {
+        const mode = settings.type === "Mixed"
+          ? ["Multiple choice", "True / False", "Multi-select", "Problem solving"][Math.floor(Math.random() * 4)]
+          : settings.type;
+        return {
+          ...adaptQuizQuestion({
+            ...question,
+            topic: question.topic || updated.title,
+            difficulty: settings.difficulty,
+            hint: question.hint || `Recall the main idea from ${updated.title}.`,
+            explanation: question.explanation || `The correct answer is “${question.correctAnswer}.” Review this concept in ${updated.title}.`,
+          }, mode, updated.title),
+          difficulty: settings.difficulty,
+        };
+      });
+      const config = { ...settings, count: prepared.length, includeExplanations: true };
+      const savedQuiz = {
+        id: crypto.randomUUID(),
+        lectureId: updated.id,
+        title: updated.title,
+        subject: updated.subject,
+        config,
+        questions: prepared,
+        createdAt: new Date().toISOString(),
+      };
+      await createUserRecord(currentUid(), "quizzes", savedQuiz);
+      setSavedQuizzes((items) => [savedQuiz, ...items.filter((item) => item.id !== savedQuiz.id)]);
+      setQuizState({ questions: prepared, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config, startedAt: Date.now(), savedQuizId: savedQuiz.id });
+      setQuizSetupCount(null);
+      setQuizSetupSettings(null);
+      setPage("quizRun");
+    } catch (error) {
+      reportCloudError("Could not save custom quiz questions", error);
+    }
+  }
+  function customizeQuiz(lecture) { setSelectedLecture(lecture); setQuizState(null); setQuizGenerationError(""); setQuizSetupCount(null); setQuizSetupSettings(null); setPage("quizSetup"); }
   async function login(credentials) {
     try {
-      const account = credentials.mode === "signup"
-        ? await createLocalAccount(credentials)
-        : await signInLocalAccount(credentials);
-      setAuthChoice(account); return "";
-    } catch (error) { return error.message || "Could not sign in. Please try again."; }
+      const user = credentials.mode === "signup"
+        ? await createFirebaseAccount(credentials)
+        : await signInFirebaseAccount(credentials);
+      setAuthChoice({ uid: user.uid, name: user.displayName || user.email || "Student", email: user.email || "" });
+      return "";
+    } catch (error) { return getAuthErrorMessage(error); }
   }
-  function googleLogin(name, email) { setAuthChoice({ name, email, source: "google" }); }
-  function finishLogin(staySignedIn) {
+  async function googleLogin() {
+    try {
+      const user = await signInWithGoogle();
+      setAuthChoice({ uid: user.uid, name: user.displayName || user.email || "Student", email: user.email || "" });
+      return "";
+    } catch (error) { return getAuthErrorMessage(error); }
+  }
+  async function finishLogin(staySignedIn) {
     if (!authChoice) return;
-    if (staySignedIn) localStorage.setItem("studyspace-profile", JSON.stringify(authChoice));
-    else localStorage.removeItem("studyspace-profile");
-    setProfile(authChoice); setAuthChoice(null);
+    try {
+      await setFirebasePersistence(staySignedIn);
+      setAuthChoice(null);
+    } catch (error) {
+      reportCloudError("Could not save your sign-in preference", error);
+    }
   }
-  function logout() { localStorage.removeItem("studyspace-profile"); setProfile(null); go("home"); }
-  function saveProfile(updates) {
+  async function logout() {
+    try {
+      await signOutFirebaseUser();
+      setProfileEditorOpen(false);
+      go("home");
+    } catch (error) {
+      reportCloudError("Could not sign out", error);
+    }
+  }
+  async function saveProfile(updates) {
     const updatedProfile = { ...profile, ...updates, name: updates.name.trim() };
-    if (profile?.source === "local") updateLocalAccountName(profile.email, updatedProfile.name);
-    if (localStorage.getItem("studyspace-profile")) localStorage.setItem("studyspace-profile", JSON.stringify(updatedProfile));
-    setProfile(updatedProfile);
-    setProfileEditorOpen(false);
-    notify("Profile updated.");
-    return "";
+    try {
+      await updateFirebaseDisplayName(updatedProfile.name);
+      await saveUserProfile(currentUid(), updatedProfile);
+      setProfile(updatedProfile);
+      setProfileEditorOpen(false);
+      notify("Profile updated.");
+      return "";
+    } catch (error) {
+      reportCloudError("Could not update your profile", error);
+      return error?.message || "Could not update your profile.";
+    }
   }
-  function finishQuiz(answers) {
-    const score = quizState.questions.reduce((total, question, index) => total + (answerMatches(question, answers[index]) ? 1 : 0), 0);
-    const attempt = { id: crypto.randomUUID(), lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, topic: selectedLecture.title, difficulty: quizState.config?.difficulty || "Medium", type: quizState.config?.type || "Multiple choice", score, total: quizState.questions.length, seconds: Math.round((Date.now() - quizState.startedAt) / 1000), date: new Date().toISOString() };
-    setAttempts((items) => [attempt, ...items]);
-    setQuizState((state) => ({ ...state, answers, done: true, score, attempt }));
+  async function updatePreference(updates) {
+    const updatedProfile = { ...profile, ...updates };
+    try {
+      await saveUserProfile(currentUid(), updates);
+      setProfile(updatedProfile);
+      if (updates.theme === "light" || updates.theme === "dark") setTheme(updates.theme);
+    } catch (error) {
+      reportCloudError("Could not save your preference", error);
+    }
   }
-  function retryQuiz() { startQuiz(selectedLecture, quizState.config, quizState.pastQuestionIds || quizState.questions.map((question) => question.id)); }
+  async function finishQuiz(answers) {
+    const score = scoreQuizQuestions(quizState.questions, answers);
+    const attempt = { id: crypto.randomUUID(), quizId: quizState.savedQuizId || "", lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, topic: selectedLecture.title, difficulty: quizState.config?.difficulty || "Medium", type: quizState.config?.type || "Multiple choice", score, total: quizState.questions.length, seconds: Math.round((Date.now() - quizState.startedAt) / 1000), date: new Date().toISOString() };
+    try {
+      await createUserRecord(currentUid(), "quizAttempts", attempt);
+      setAttempts((items) => [attempt, ...items.filter((item) => item.id !== attempt.id)]);
+      setQuizState((state) => ({ ...state, answers, done: true, score, attempt }));
+    } catch (error) {
+      reportCloudError("Could not save quiz attempt", error);
+    }
+  }
+  function retryQuiz() { startQuiz(selectedLecture, quizState.config || DEFAULT_QUIZ_SETTINGS); }
   function startConfiguredQuiz(settings) { startQuiz(selectedLecture, settings); }
   function goToQuizReview() { setPage("quizReview"); }
   function openLecture(lecture) { setSelectedLecture(lecture); setPage("viewer"); }
   function addToSchedule(lecture) { setPage("schedule"); setSelectedLecture(lecture); }
+  function openSavedQuiz(savedQuiz) {
+    const lecture = lectures.find((item) => item.id === savedQuiz.lectureId);
+    if (!lecture) {
+      setQuizGenerationError("This saved quiz is linked to a lecture that is no longer in your library.");
+      return;
+    }
+    const questions = getUniqueValidQuestions(savedQuiz.questions);
+    if (!questions.length || questions.length !== savedQuiz.questions?.length || questions.length > 20) {
+      setQuizGenerationError("This saved quiz has missing or invalid questions and cannot be opened.");
+      return;
+    }
+    const config = {
+      difficulty: "Medium",
+      type: "Multiple choice",
+      includeExplanations: true,
+      ...savedQuiz.config,
+      count: questions.length,
+    };
+    setQuizGenerationError("");
+    setSelectedLecture(lecture);
+    setQuizState({ questions, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config, startedAt: Date.now(), savedQuizId: savedQuiz.id });
+    setPage("quizRun");
+  }
+  function openQuizOptions(lecture) {
+    setSelectedLecture(lecture);
+    setQuizState(null);
+    setQuizGenerationError("");
+    setPage("quizOptions");
+  }
   async function summarizeLecture(lecture) {
     setSummarizingLectureId(lecture.id);
     try {
@@ -396,15 +718,63 @@ function App() {
         notify("Add lecture notes or a video transcript before creating a summary.");
         return;
       }
-      const response = await fetch("/api/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: lecture.title, subject: lecture.subject, notes, videoData, videoType: lecture.fileType, videoName: lecture.fileName, videoUrl }),
+      console.log("Lecture:", lecture);
+      console.log("Notes value:", notes);
+      console.log("Notes type:", typeof notes);
+      console.log("Notes length:", notes?.length);
+      // Get the lecture text, or extract it from the stored PDF
+        let lectureNotes = lecture.lectureContent?.trim() || "";
+
+        if (!lectureNotes && lecture.file && lecture.fileType === "application/pdf") {
+          const pdfResponse = await fetch(lecture.file);
+          const pdfBlob = await pdfResponse.blob();
+
+          const pdfFile = new File(
+            [pdfBlob],
+            lecture.fileName || "lecture.pdf",
+            { type: "application/pdf" }
+          );
+
+          lectureNotes = await extractLectureText(
+            pdfFile,
+            lecture.fileName || "lecture.pdf",
+            "application/pdf"
+          );
+        }
+
+        console.log("Extracted PDF text:", lectureNotes);
+        console.log("Extracted text length:", lectureNotes.length);
+
+        if (!lectureNotes.trim()) {
+          throw new Error("No text could be extracted from this PDF.");
+        }
+
+        const response = await fetch("/api/summarize", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: lecture.title,
+            subject: lecture.subject,
+            notes: lectureNotes,
+          }),
       });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || "Could not summarize this lecture.");
-      if (!result.summary?.trim()) throw new Error("The summarizer returned an empty summary. Try again.");
+
+          console.log("Summary response:", response.status, result);
+
+            if (!response.ok) {
+              throw new Error(
+         result.error || `Server error: ${response.status}`
+      );
+  }
+
+if (!result.summary?.trim()) {
+  throw new Error("The summarizer returned an empty summary. Try again.");
+}
       const updated = { ...lecture, lectureContent: lecture.lectureContent || (videoData || videoUrl ? result.summary.trim() : notes), summary: result.summary.trim() };
+      await persistLecture(updated);
       setLectures((items) => items.map((item) => item.id === lecture.id ? updated : item));
       setSelectedLecture((current) => current?.id === lecture.id ? updated : current);
     } catch (error) {
@@ -442,7 +812,7 @@ function App() {
           </BreadcrumbList>
         </Breadcrumb>
         <div className="top-actions">
-          <label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => setTheme(checked ? "dark" : "light")} aria-label="Toggle dark mode" /></label>
+          <label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => updatePreference({ theme: checked ? "dark" : "light" })} aria-label="Toggle dark mode" /></label>
           <div className="calendar-trigger-wrap" ref={notificationsPopover}>
             <button type="button" className={`notification-trigger${notificationsOpen ? " is-open" : ""}`} aria-label={scheduleReminders.length ? `Study schedule notifications, ${scheduleReminders.length} upcoming` : "Study schedule notifications"} aria-haspopup="dialog" aria-expanded={notificationsOpen} onClick={() => { setCalendarOpen(false); setNotificationsOpen((open) => !open); }}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
@@ -461,22 +831,24 @@ function App() {
         </div>
       </header>
       <div className="content">
+        {cloudError && <p className="auth-error" role="alert">{cloudError}</p>}
+        {quizGenerationError && !["quizzes", "quizOptions"].includes(page) && <p className="quiz-setup-message" role="alert">{quizGenerationError}</p>}
         {page === "home" && <Dashboard lectures={lectures} sessions={sessions} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
-        {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={openQuizOptions} onAdd={saveLecture} />}
+        {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={startQuiz} onCustomizeSettings={openQuizOptions} generatingLectureId={generatingLectureId} onAdd={saveLecture} />}
         {page === "checklist" && <Checklist lectures={lectures} studied={studied} completion={completion} onToggle={toggleStudied} />}
-        {page === "schedule" && <SchedulePage sessions={sessions} lectures={lectures} onSave={saveSession} onChange={setSessions} selectedLecture={selectedLecture} clearSelected={() => setSelectedLecture(null)} />}
-        {page === "viewer" && selectedLecture && <LectureViewer lecture={selectedLecture} onBack={() => go("lectures")} onToggle={() => toggleStudied(selectedLecture.id)} onSchedule={() => addToSchedule(selectedLecture)} onQuiz={() => openQuizOptions(selectedLecture)} onSummarize={() => summarizeLecture(selectedLecture)} summarizing={summarizingLectureId === selectedLecture.id} />}
+        {page === "schedule" && <SchedulePage sessions={sessions} lectures={lectures} onSave={saveSession} onUpdate={updateSession} onDelete={deleteSession} onPreferenceChange={updatePreference} timeFormat={profile?.timeFormat} selectedLecture={selectedLecture} clearSelected={() => setSelectedLecture(null)} />}
+        {page === "viewer" && selectedLecture && <LectureViewer lecture={selectedLecture} onBack={() => go("lectures")} onToggle={() => toggleStudied(selectedLecture.id)} onSchedule={() => addToSchedule(selectedLecture)} onQuiz={() => startQuiz(selectedLecture)} onCustomizeSettings={() => openQuizOptions(selectedLecture)} generating={Boolean(generatingLectureId)} onSummarize={() => summarizeLecture(selectedLecture)} summarizing={summarizingLectureId === selectedLecture.id} />}
         {page === "quizRun" && quizState && <QuizRun state={quizState} lecture={selectedLecture} onChange={setQuizState} onFinish={finishQuiz} onRetry={retryQuiz} onReview={goToQuizReview} onBack={() => go("quizzes")} />}
-        {page === "quizSetup" && selectedLecture && <QuizSetup lecture={selectedLecture} onSave={saveCustomQuestions} onBack={() => go("quizzes")} />}
-        {page === "quizOptions" && selectedLecture && <QuizOptions lecture={selectedLecture} onStart={startConfiguredQuiz} onBack={() => go("quizzes")} />}
+        {page === "quizSetup" && selectedLecture && <QuizSetup lecture={selectedLecture} requestedCount={quizSetupCount} onSave={saveCustomQuestions} onBack={() => go("quizzes")} />}
+        {page === "quizOptions" && selectedLecture && <QuizOptions lecture={selectedLecture} onStart={startConfiguredQuiz} onBack={() => go("quizzes")} isGenerating={Boolean(generatingLectureId)} error={quizGenerationError} />}
         {page === "quizReview" && quizState && <QuizReview state={quizState} lecture={selectedLecture} onStudy={() => openLecture(selectedLecture)} onRetry={retryQuiz} onBack={() => setPage("quizRun")} />}
-        {page === "quizzes" && <QuizHistory attempts={attempts} lectures={lectures} onQuiz={openQuizOptions} onCustomize={customizeQuiz} generatingLectureId={generatingLectureId} />}
+        {page === "quizzes" && <QuizHistory attempts={attempts} lectures={lectures} savedQuizzes={savedQuizzes} onQuiz={startQuiz} onCustomizeSettings={openQuizOptions} onEditQuestions={customizeQuiz} onOpenSaved={openSavedQuiz} generatingLectureId={generatingLectureId} error={quizGenerationError} />}
         {page === "progress" && <ProgressPage lectures={lectures} attempts={attempts} studied={studied} completion={completion} />}
       </div>
     </SidebarInset>
     {toast && <div className="toast">✓ &nbsp;{toast}</div>}
     {profileEditorOpen && profile && <ProfileEditor profile={profile} onSave={saveProfile} onClose={() => setProfileEditorOpen(false)} onLogout={logout} />}
-    {!profile && <LoginScreen googleClientId={googleClientId} googleButton={googleButton} authChoice={authChoice} onLogin={login} onFinish={finishLogin} />}
+    {!profile && <LoginScreen firebaseReady={firebaseConfigured} missingConfig={missingFirebaseConfig} authChoice={authChoice} onLogin={login} onGoogleLogin={googleLogin} onFinish={finishLogin} />}
   </SidebarProvider>;
 }
 
@@ -517,12 +889,13 @@ function ProfileEditor({ profile, onSave, onClose, onLogout }) {
   const yearLevels = ["Grade 11", "Grade 12", "1st Year College", "2nd Year College", "3rd Year College", "4th Year College", "5th Year College", "6th Year College", "Graduate Student", "Other", "Prefer not to say"];
   const savedYearLevel = form.yearLevel && !yearLevels.includes(form.yearLevel) ? [form.yearLevel, ...yearLevels] : yearLevels;
   function set(key, value) { setForm((current) => ({ ...current, [key]: value })); }
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     if (!form.name.trim()) { setError("Enter your name to save your profile."); return; }
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) { setError("Enter a valid contact email address."); return; }
     setError("");
-    onSave(form);
+    const message = await onSave(form);
+    if (message) setError(message);
   }
   return <div className="profile-modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="panel profile-editor" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
@@ -573,7 +946,7 @@ function Stat({ icon, tint, label, value, foot }) { return <div className="stat-
 function QuickAction({ icon, title, subtitle, onClick }) { return <button className="quick-action" onClick={onClick}><span className="quick-icon">{icon}</span><span><strong>{title}</strong><small>{subtitle}</small></span><span className="row-arrow">↗</span></button>; }
 function Empty({ text, action, onClick }) { return <div className="empty-state"><span>✦</span><p>{text}</p>{action && <button className="text-button" onClick={onClick}>{action} →</button>}</div>; }
 
-function LoginScreen({ googleClientId, googleButton, authChoice, onLogin, onFinish }) {
+function LoginScreen({ firebaseReady, missingConfig, authChoice, onLogin, onGoogleLogin, onFinish }) {
   const [mode, setMode] = useState("signup");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -583,6 +956,7 @@ function LoginScreen({ googleClientId, googleButton, authChoice, onLogin, onFini
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [googleError, setGoogleError] = useState("");
   async function submitCredentials(event) {
     event.preventDefault(); setError("");
     if (mode === "signup" && password !== confirmPassword) { setError("The passwords do not match."); return; }
@@ -592,33 +966,52 @@ function LoginScreen({ googleClientId, googleButton, authChoice, onLogin, onFini
     setSubmitting(false); setError(message || "");
   }
   function switchMode() { setMode(mode === "signup" ? "login" : "signup"); setPassword(""); setConfirmPassword(""); setError(""); }
-  if (authChoice) return <div className="auth-overlay"><Card className="auth-card stay-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">SIGN-IN PREFERENCE</p><h1>Stay signed in?</h1><p className="auth-intro">Keep your Studyspace profile signed in on this device, {authChoice.name}. You can sign out anytime from the profile menu.</p><button className="button primary auth-submit" onClick={() => onFinish(true)}>Yes, stay signed in</button><button className="button secondary auth-submit" onClick={() => onFinish(false)}>No, just for this session</button><p className="auth-local-note">If you choose session only, refreshing or closing this browser will sign you out.</p></Card></div>;
-  return <div className="auth-overlay"><Card className="auth-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">YOUR PERSONAL STUDY SPACE</p><h1>{mode === "signup" ? "Make room to grow." : "Welcome back."}</h1><p className="auth-intro">{mode === "signup" ? "Create a profile to keep your lectures, schedule, and progress together on this device." : "Sign in to continue to your study space on this device."}</p><form className="auth-form" onSubmit={submitCredentials}>
+  async function continueWithGoogle() {
+    setSubmitting(true);
+    setGoogleError("");
+    const message = await onGoogleLogin();
+    setSubmitting(false);
+    setGoogleError(message || "");
+  }
+  if (authChoice) return <div className="auth-overlay"><Card className="auth-card stay-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">SIGN-IN PREFERENCE</p><h1>Stay signed in?</h1><p className="auth-intro">Keep your Studyspace profile signed in on this device, {authChoice.name}. You can sign out anytime from the profile menu.</p><button className="button primary auth-submit" onClick={() => onFinish(true)}>Yes, stay signed in</button><button className="button secondary auth-submit" onClick={() => onFinish(false)}>No, just for this session</button><p className="auth-local-note">Session-only sign-in ends when this browser session closes.</p></Card></div>;
+  return <div className="auth-overlay"><Card className="auth-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">YOUR PERSONAL STUDY SPACE</p><h1>{mode === "signup" ? "Make room to grow." : "Welcome back."}</h1><p className="auth-intro">{mode === "signup" ? "Create an account to keep your lectures, schedule, and progress synced to your Firebase account." : "Sign in to continue to your synced study space."}</p><form className="auth-form" onSubmit={submitCredentials}>
     {mode === "signup" && <label>Your name<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Alex Student" /></label>}
     <label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>
     <label>Password<span className="password-field"><input required type={showPassword ? "text" : "password"} minLength="8" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 8 characters" : "Enter your password"} /><button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((shown) => !shown)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>
     {mode === "signup" && <label>Confirm password<span className="password-field"><input required type={showConfirmPassword ? "text" : "password"} minLength="8" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Enter your password again" /><button type="button" className="password-toggle" aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"} aria-pressed={showConfirmPassword} onClick={() => setShowConfirmPassword((shown) => !shown)}>{showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>}
     {error && <p className="auth-error" role="alert">{error}</p>}
     <button className="button primary auth-submit" disabled={submitting}>{submitting ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}</button>
-  </form><div className="auth-divider"><span>or</span></div>{googleClientId ? <div ref={googleButton} className="google-button-slot" /> : <button className="google-placeholder" type="button" disabled><span className="google-g">G</span> Continue with Google <small>Set a Google client ID to enable</small></button>}<p className="auth-switch">{mode === "signup" ? "Already have an account?" : "New to Studyspace?"} <button type="button" onClick={switchMode}>{mode === "signup" ? "Log in" : "Sign up"}</button></p><p className="auth-local-note">Passwords are salted and hashed in this browser. This local demo is not server-backed authentication and does not sync between devices.</p></Card></div>;
+  </form><div className="auth-divider"><span>or</span></div><button className="google-placeholder" type="button" disabled={submitting || !firebaseReady} onClick={continueWithGoogle}><span className="google-g">G</span> Continue with Google {!firebaseReady && <small>Complete Firebase configuration to enable</small>}</button>{googleError && <p className="auth-error" role="alert">{googleError}</p>}{!firebaseReady && <p className="auth-error" role="alert">Firebase setup is incomplete. Replace the placeholder values in the project-root `.env.local` with your Firebase Web App configuration, then restart Vite. Missing values: {missingConfig.join(", ")}</p>}<p className="auth-switch">{mode === "signup" ? "Already have an account?" : "New to Studyspace?"} <button type="button" onClick={switchMode}>{mode === "signup" ? "Log in" : "Sign up"}</button></p><p className="auth-local-note">Your account uses Firebase Authentication. Lectures, study activity, and profile preferences sync to your account.</p></Card></div>;
 }
 
-function QuizSetup({ lecture, onSave, onBack }) {
-  const [questions, setQuestions] = useState(lecture.quizSource === "custom" ? lecture.questions || [] : getLectureQuestions(lecture));
+function QuizSetup({ lecture, requestedCount, onSave, onBack }) {
+  const [questions, setQuestions] = useState(() => getUniqueValidQuestions(getLectureQuestions(lecture)));
   const [question, setQuestion] = useState("");
   const [options, setOptions] = useState(["", "", "", ""]);
   const [answerIndex, setAnswerIndex] = useState(0);
+  const [error, setError] = useState("");
   function addQuestion(event) {
     event.preventDefault();
     const cleanOptions = options.map((option) => option.trim());
     if (questions.length >= 20 || !question.trim() || cleanOptions.some((option) => !option)) return;
-    setQuestions((items) => [...items, { question: question.trim(), options: cleanOptions, answer: cleanOptions[answerIndex] }]);
+    const candidate = { question: question.trim(), options: cleanOptions, answer: cleanOptions[answerIndex] };
+    if (getUniqueValidQuestions([...questions, candidate]).length === questions.length) {
+      setError("This question duplicates an existing question or does not have valid answer choices.");
+      return;
+    }
+    setError("");
+    setQuestions((items) => getUniqueValidQuestions([...items, candidate]));
     setQuestion(""); setOptions(["", "", "", ""]); setAnswerIndex(0);
   }
-  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-setup"><p className="eyebrow">CUSTOMIZE THIS QUIZ · OPTIONAL</p><h1>{lecture.title}</h1><p className="subheading">Questions generated from this lecture are preloaded when readable text is available. Edit the set or add your own; quizzes need 10–20 questions.</p><form className="question-builder" onSubmit={addQuestion}><label>Question<textarea required rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Write a question from the lecture notes" /></label><div className="builder-options">{options.map((option, index) => <label key={index}>Choice {String.fromCharCode(65 + index)}<input required value={option} onChange={(event) => setOptions((items) => items.map((item, i) => i === index ? event.target.value : item))} placeholder={`Answer choice ${index + 1}`} /></label>)}</div><label>Correct answer<select value={answerIndex} onChange={(event) => setAnswerIndex(Number(event.target.value))}>{options.map((option, index) => <option key={index} value={index}>Choice {String.fromCharCode(65 + index)}{option.trim() ? ` — ${option}` : ""}</option>)}</select></label><button className="button secondary" disabled={questions.length >= 20}>＋ Add question</button></form><div className="builder-list"><div className="panel-heading"><h2>Your questions</h2><span>{questions.length} added</span></div>{questions.length ? questions.map((item, index) => <div className="builder-question" key={`${item.question}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{item.question}</strong><small>Correct answer: {item.answer}</small></div><button type="button" className="text-button delete-text" onClick={() => setQuestions((items) => items.filter((_, i) => i !== index))}>Remove</button></div>) : <p className="muted small-text">No questions yet. Add questions here, or provide more lecture text if generation could not find enough.</p>}</div><div className="form-actions"><button type="button" className="button secondary" onClick={onBack}>Cancel</button><button type="button" className="button primary" disabled={questions.length < 10 || questions.length > 20} onClick={() => onSave(questions)}>{questions.length < 10 ? `Add ${10 - questions.length} more for a 10-question quiz` : "Save & start quiz"}</button></div></section></>;
+  const validQuestionCount = getUniqueValidQuestions(questions).length;
+  const requiredCount = requestedCount || 10;
+  const countMessage = requestedCount
+    ? `The selected quiz needs ${requestedCount} questions. ${Math.min(validQuestionCount, requestedCount)} of ${requestedCount} valid, distinct questions are ready.`
+    : "Questions generated from readable lecture text are preloaded. Edit the set or add your own; this editor requires at least 10 questions.";
+  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-setup"><p className="eyebrow">CUSTOMIZE THIS QUIZ · OPTIONAL</p><h1>{lecture.title}</h1><p className="subheading">{countMessage}</p>{requestedCount && validQuestionCount < requestedCount && <p className="quiz-setup-message" role="alert">Add {requestedCount - validQuestionCount} more valid, distinct question{requestedCount - validQuestionCount === 1 ? "" : "s"} to start this quiz.</p>}<form className="question-builder" onSubmit={addQuestion}><label>Question<textarea required rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Write a question from the lecture notes" /></label><div className="builder-options">{options.map((option, index) => <label key={index}>Choice {String.fromCharCode(65 + index)}<input required value={option} onChange={(event) => setOptions((items) => items.map((item, i) => i === index ? event.target.value : item))} placeholder={`Answer choice ${index + 1}`} /></label>)}</div><label>Correct answer<select value={answerIndex} onChange={(event) => setAnswerIndex(Number(event.target.value))}>{options.map((option, index) => <option key={index} value={index}>Choice {String.fromCharCode(65 + index)}{option.trim() ? ` — ${option}` : ""}</option>)}</select></label>{error && <p className="quiz-setup-message" role="alert">{error}</p>}<button className="button secondary" disabled={questions.length >= 20}>＋ Add question</button></form><div className="builder-list"><div className="panel-heading"><h2>Your questions</h2><span>{validQuestionCount} added</span></div>{questions.length ? questions.map((item, index) => <div className="builder-question" key={`${item.question}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{item.question}</strong><small>Correct answer: {answerText(item.correctAnswer ?? item.answer)}</small></div><button type="button" className="text-button delete-text" onClick={() => setQuestions((items) => items.filter((_, i) => i !== index))}>Remove</button></div>) : <p className="muted small-text">No questions yet. Add questions here, or provide more lecture text if generation could not find enough.</p>}</div><div className="form-actions"><button type="button" className="button secondary" onClick={onBack}>Cancel</button><button type="button" className="button primary" disabled={validQuestionCount < requiredCount || validQuestionCount > 20} onClick={() => onSave(questions, requestedCount)}>{validQuestionCount < requiredCount ? `Add ${requiredCount - validQuestionCount} more question${requiredCount - validQuestionCount === 1 ? "" : "s"}` : requestedCount ? `Save & start ${requestedCount}-question quiz` : "Save & start quiz"}</button></div></section></>;
 }
 
-function LecturesPage({ lectures, search, setSearch, onOpen, onToggle, onQuiz, onAdd }) {
+function LecturesPage({ lectures, search, setSearch, onOpen, onToggle, onQuiz, onCustomizeSettings, generatingLectureId, onAdd }) {
   const [showForm, setShowForm] = useState(false);
   const [filter, setFilter] = useState("All");
   const subjects = ["All", ...new Set(lectures.map((item) => item.subject))];
@@ -627,9 +1020,9 @@ function LecturesPage({ lectures, search, setSearch, onOpen, onToggle, onQuiz, o
   return <><PageHeading eyebrow="YOUR PERSONAL LIBRARY" title="My lectures" subtitle="Keep your notes, videos, and study resources all in one place." action={<button className="button primary" onClick={() => setShowForm(!showForm)}>{showForm ? "× Close" : "＋ Add lecture"}</button>} />
     {showForm && <LectureForm onSave={submit} onCancel={() => setShowForm(false)} />}
     <div className="library-toolbar"><label className="search-box"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search lectures, subjects, or topics..." /></label><div className="filter-chips">{subjects.map((item) => <button className={`filter-chip ${filter === item ? "selected" : ""}`} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div></div>
-    {shown.length ? <div className="lecture-grid">{shown.map((lecture) => <LectureCard key={lecture.id} lecture={lecture} onOpen={onOpen} onToggle={onToggle} onQuiz={onQuiz} />)}</div> : <div className="panel empty-library"><span>▤</span><h2>No lectures found</h2><p>Try a different search or add a new study material.</p><button className="button secondary" onClick={() => setShowForm(true)}>＋ Add lecture</button></div>}</>;
+    {shown.length ? <div className="lecture-grid">{shown.map((lecture) => <LectureCard key={lecture.id} lecture={lecture} onOpen={onOpen} onToggle={onToggle} onQuiz={onQuiz} onCustomizeSettings={onCustomizeSettings} generating={generatingLectureId === lecture.id} generationInProgress={Boolean(generatingLectureId)} />)}</div> : <div className="panel empty-library"><span>▤</span><h2>No lectures found</h2><p>Try a different search or add a new study material.</p><button className="button secondary" onClick={() => setShowForm(true)}>＋ Add lecture</button></div>}</>;
 }
-function LectureCard({ lecture, onOpen, onToggle, onQuiz }) { return <article className="lecture-card"><div className="lecture-card-top"><div className="file-icon">{lecture.fileType?.includes("pdf") ? "PDF" : lecture.fileType?.startsWith("video") ? "▶" : "▤"}</div><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "✓ Studied" : "Not studied"}</span></div><span className="subject-label">{lecture.subject}</span><h3>{lecture.title}</h3><p className="lecture-desc">{lecture.description || "No description added yet."}</p><div className="lecture-meta">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}{lecture.fileName && <span> · {lecture.fileName}</span>}</div><div className="lecture-actions"><button className="button secondary small" onClick={() => onOpen(lecture)}>Open lecture</button><button className="icon-button" title="Take quiz" onClick={() => onQuiz(lecture)}>✧</button><button className="icon-button" title={lecture.studied ? "Mark as not studied" : "Mark as studied"} onClick={() => onToggle(lecture.id)}>{lecture.studied ? "✓" : "○"}</button></div></article>; }
+function LectureCard({ lecture, onOpen, onToggle, onQuiz, onCustomizeSettings, generating, generationInProgress }) { return <article className="lecture-card"><div className="lecture-card-top"><div className="file-icon">{lecture.fileType?.includes("pdf") ? "PDF" : lecture.fileType?.startsWith("video") ? "▶" : "▤"}</div><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "✓ Studied" : "Not studied"}</span></div><span className="subject-label">{lecture.subject}</span><h3>{lecture.title}</h3><p className="lecture-desc">{lecture.description || "No description added yet."}</p><div className="lecture-meta">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}{lecture.fileName && <span> · {lecture.fileName}</span>}</div><div className="lecture-actions"><button className="button secondary small" onClick={() => onOpen(lecture)}>Open lecture</button><button className="icon-button" disabled={generationInProgress} title={generating ? "Generating your quiz…" : "Generate quiz now"} aria-label={generating ? "Generating your quiz" : `Generate quiz now for ${lecture.title}`} onClick={() => onQuiz(lecture)}>{generating ? "…" : "✧"}</button><button className="icon-button" disabled={generationInProgress} title="Customize quiz" aria-label={`Customize quiz for ${lecture.title}`} onClick={() => onCustomizeSettings(lecture)}>⚙</button><button className="icon-button" title={lecture.studied ? "Mark as not studied" : "Mark as studied"} onClick={() => onToggle(lecture.id)}>{lecture.studied ? "✓" : "○"}</button></div></article>; }
 function LectureForm({ onSave, onCancel }) {
   const [form, setForm] = useState({ title: "", subject: "", description: "", lectureContent: "", fileName: "", fileType: "", fileData: "", fileSize: 0, youtubeUrl: "" }); const [busy, setBusy] = useState(false); const [extractMessage, setExtractMessage] = useState(""); const fileInput = useRef(null);
   function set(key, value) { setForm((state) => ({ ...state, [key]: value })); }
@@ -658,26 +1051,41 @@ function LectureForm({ onSave, onCancel }) {
 }
 function Checklist({ lectures, studied, completion, onToggle }) { const groups = [...new Set(lectures.map((l) => l.subject))]; return <><PageHeading eyebrow="A LITTLE PROGRESS ADDS UP" title="Study checklist" subtitle="Mark topics as you study them. You can always revisit one later." /><section className="panel checklist-overview"><div className="checklist-summary"><div><p className="eyebrow">OVERALL STUDY PROGRESS</p><h2>{studied} of {lectures.length} lectures studied</h2><p className="muted">{completion}% of your study library is complete</p></div><strong>{completion}%</strong></div><ProgressBar value={completion} /></section><div className="checklist-groups">{groups.map((subject) => { const items = lectures.filter((l) => l.subject === subject); const done = items.filter((l) => l.studied).length; return <section className="panel checklist-group" key={subject}><div className="check-group-title"><div className="subject-icon">{subject.slice(0, 1)}</div><div><h2>{subject}</h2><span>{done} of {items.length} completed</span></div><ProgressBar value={percent(done, items.length)} /></div>{items.map((lecture) => <label key={lecture.id} className={`check-item ${lecture.studied ? "checked" : ""}`}><input type="checkbox" checked={lecture.studied} onChange={() => onToggle(lecture.id)} /><span className="custom-check">✓</span><span>{lecture.title}</span><span className="check-date">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}</span></label>)}</section>; })}{!lectures.length && <Empty text="Add a lecture to start your checklist." />}</div></>; }
 
-function SchedulePage({ sessions, lectures, onSave, onChange, selectedLecture, clearSelected }) {
+function SchedulePage({ sessions, lectures, onSave, onUpdate, onDelete, onPreferenceChange, timeFormat, selectedLecture, clearSelected }) {
   const [editing, setEditing] = useState(null); const [formOpen, setFormOpen] = useState(Boolean(selectedLecture));
-  function save(form) { if (editing) onChange((items) => items.map((s) => s.id === editing.id ? { ...s, ...form } : s)); else onSave(form); setEditing(null); setFormOpen(false); clearSelected(); }
+  async function save(form) {
+    const saved = editing ? await onUpdate(editing.id, form) : await onSave(form);
+    if (saved === false) return;
+    setEditing(null); setFormOpen(false); clearSelected();
+  }
   function edit(s) { setEditing(s); setFormOpen(true); }
-  function remove(id) { onChange((items) => items.filter((s) => s.id !== id)); }
-  function toggle(id) { onChange((items) => items.map((s) => s.id === id ? { ...s, completed: !s.completed } : s)); }
+  function remove(id) { onDelete(id); }
+  function toggle(id) {
+    const session = sessions.find((item) => item.id === id);
+    if (session) onUpdate(id, { completed: !session.completed });
+  }
   const sorted = [...sessions].sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
   const todaySessions = sorted.filter((s) => s.date === today() && !s.completed); const upcoming = sorted.filter((s) => s.date > today() && !s.completed); const completed = sorted.filter((s) => s.completed);
   return <><PageHeading eyebrow="MAKE SPACE TO LEARN" title="Study schedule" subtitle="Plan your sessions, stay consistent, and celebrate each one you complete." action={<button className="button primary" onClick={() => { setEditing(null); setFormOpen(!formOpen); }}>＋ Add session</button>} />
-    {formOpen && <ScheduleForm lectures={lectures} initial={editing || (selectedLecture ? { subject: selectedLecture.subject, topic: selectedLecture.title, date: today() } : null)} onSave={save} onCancel={() => { setFormOpen(false); setEditing(null); clearSelected(); }} />}
+    {formOpen && <ScheduleForm lectures={lectures} initial={editing || (selectedLecture ? { subject: selectedLecture.subject, topic: selectedLecture.title, date: today() } : null)} timeFormatPreference={timeFormat} onPreferenceChange={onPreferenceChange} onSave={save} onCancel={() => { setFormOpen(false); setEditing(null); clearSelected(); }} />}
     <div className="schedule-columns"><div><ScheduleGroup title="TODAY" date={fmtDate(today())} sessions={todaySessions} onEdit={edit} onDelete={remove} onToggle={toggle} /><ScheduleGroup title="UPCOMING" sessions={upcoming} onEdit={edit} onDelete={remove} onToggle={toggle} /><ScheduleGroup title="COMPLETED" sessions={completed} onEdit={edit} onDelete={remove} onToggle={toggle} /></div><div className="schedule-side panel"><span className="calendar-icon">▦</span><p className="eyebrow">MAKE A PLAN</p><h2>Give your goals a time and place.</h2><p className="muted">A short, focused review can make a big difference. Add notes to remember what you want to cover.</p><button className="button secondary" onClick={() => { setEditing(null); setFormOpen(true); }}>Plan a session</button><div className="side-stat"><strong>{completed.length}</strong><span>completed sessions</span></div></div></div>
   </>;
 }
-function ScheduleForm({ lectures, initial, onSave, onCancel }) {
+function ScheduleForm({ lectures, initial, timeFormatPreference, onPreferenceChange, onSave, onCancel }) {
   const [form, setForm] = useState({ subject: initial?.subject || "", topic: initial?.topic || "", date: initial?.date || today(), start: initial?.start || "19:00", end: initial?.end || "20:00", notes: initial?.notes || "" });
-  const [timeFormat, setTimeFormat] = useState(() => readStore("studyspace-time-format", "12h") === "24h" ? "24h" : "12h");
-  const [timeDrafts, setTimeDrafts] = useState(() => ({ start: formatScheduleTime(initial?.start || "19:00", readStore("studyspace-time-format", "12h") === "24h" ? "24h" : "12h"), end: formatScheduleTime(initial?.end || "20:00", readStore("studyspace-time-format", "12h") === "24h" ? "24h" : "12h") }));
+  const [timeFormat, setTimeFormat] = useState(() => timeFormatPreference === "24h" ? "24h" : "12h");
+  const [timeDrafts, setTimeDrafts] = useState(() => ({ start: formatScheduleTime(initial?.start || "19:00", timeFormat), end: formatScheduleTime(initial?.end || "20:00", timeFormat) }));
   const [pickerField, setPickerField] = useState(null);
   function set(k, v) { setForm((s) => ({ ...s, [k]: v })); }
-  useEffect(() => { try { localStorage.setItem("studyspace-time-format", JSON.stringify(timeFormat)); } catch {} }, [timeFormat]);
+  useEffect(() => {
+    if ((timeFormatPreference === "12h" || timeFormatPreference === "24h") && timeFormatPreference !== timeFormat) {
+      setTimeDrafts((drafts) => Object.fromEntries(["start", "end"].map((field) => {
+        const canonical = parseScheduleTime(drafts[field], timeFormat);
+        return [field, canonical ? formatScheduleTime(canonical, timeFormatPreference) : drafts[field]];
+      })));
+      setTimeFormat(timeFormatPreference);
+    }
+  }, [timeFormatPreference]);
   const parsedTimes = { start: parseScheduleTime(timeDrafts.start, timeFormat), end: parseScheduleTime(timeDrafts.end, timeFormat) };
   const timeErrors = {
     start: parsedTimes.start ? "" : `Enter a valid ${timeFormat === "12h" ? "time such as 08:30 AM" : "time in HH:mm format"}.`,
@@ -689,6 +1097,7 @@ function ScheduleForm({ lectures, initial, onSave, onCancel }) {
       return [field, canonical ? formatScheduleTime(canonical, nextFormat) : drafts[field]];
     })));
     setTimeFormat(nextFormat);
+    onPreferenceChange({ timeFormat: nextFormat });
   }
   function editTime(field, value) {
     setTimeDrafts((drafts) => ({ ...drafts, [field]: value }));
@@ -712,41 +1121,46 @@ function ScheduleForm({ lectures, initial, onSave, onCancel }) {
 }
 function ScheduleGroup({ title, date, sessions, onEdit, onDelete, onToggle }) { return <section className="schedule-group"><div className="schedule-group-heading"><div><p className="eyebrow">{title}</p>{date && <h2>{date}</h2>}</div><span>{sessions.length} {sessions.length === 1 ? "session" : "sessions"}</span></div>{sessions.length ? sessions.map((s) => <article className={`panel session-card ${s.completed ? "session-done" : ""}`} key={s.id}><div className="session-time"><strong>{fmtTime(s.start)}</strong><span>{fmtTime(s.end)}</span></div><div className="session-info"><div className="session-header"><span className="subject-label">{s.subject}</span><span className={`status ${s.completed ? "complete" : "upcoming"}`}>{s.completed ? "Completed" : s.date === today() && new Date().toTimeString().slice(0, 5) >= s.start && new Date().toTimeString().slice(0, 5) <= s.end ? "In progress" : "Upcoming"}</span></div><h3>{s.topic}</h3>{s.notes && <p>{s.notes}</p>}{s.date !== today() && <small>{fmtDate(s.date)}</small>}<div className="session-actions"><button className="text-button" onClick={() => onToggle(s.id)}>{s.completed ? "↶ Mark upcoming" : "✓ Mark complete"}</button><button className="text-button" onClick={() => onEdit(s)}>Edit</button><button className="text-button delete-text" onClick={() => onDelete(s.id)}>Delete</button></div></div></article>) : <div className="panel schedule-empty"><span>◷</span><p>Nothing scheduled here yet.</p></div>}</section>; }
 
-function LectureViewer({ lecture, onBack, onToggle, onSchedule, onQuiz, onSummarize, summarizing }) {
+function LectureViewer({ lecture, onBack, onToggle, onSchedule, onQuiz, onCustomizeSettings, generating, onSummarize, summarizing })  {
   const [previewSize, setPreviewSize] = useState("normal");
-  const [pdfFitZoom, setPdfFitZoom] = useState(65);
   const previewRef = useRef(null);
   const youtube = lecture.fileName?.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]+)/i);
   const src = youtube ? `https://www.youtube-nocookie.com/embed/${youtube[1]}` : lecture.fileData;
   const video = youtube || lecture.fileType?.startsWith("video/");
   const pdf = lecture.fileType === "application/pdf";
   const hasTextPreview = Boolean(lecture.lectureContent?.trim()) && !pdf && !video;
-  useEffect(() => {
-    if (!pdf || !previewRef.current) return;
-    const host = previewRef.current;
-    const updateFitZoom = () => {
-      // Leave room for Chrome's built-in PDF toolbar and thumbnail pane.
-      const availableWidth = Math.max(280, host.clientWidth - 28);
-      setPdfFitZoom(Math.max(35, Math.min(90, Math.round((availableWidth / 8.16) * 0.68))));
-    };
-    updateFitZoom();
-    const observer = new ResizeObserver(updateFitZoom);
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, [pdf]);
-  const activePdfZoom = previewSize === "compact"
-    ? Math.max(30, Math.round(pdfFitZoom * 0.78))
-    : previewSize === "large" ? Math.min(120, Math.round(pdfFitZoom * 1.2)) : pdfFitZoom;
   return <>
     <button className="back-link" onClick={onBack}>← &nbsp;Back to lectures</button>
     <div className="viewer-heading"><div><p className="eyebrow">{lecture.subject}</p><h1>{lecture.title}</h1><p className="subheading">{lecture.description || "Study material"}</p></div><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "✓ Studied" : "Not studied"}</span></div>
     <section ref={previewRef} className={`panel viewer-panel viewer-size-${previewSize}`}>
       <div className="viewer-size-controls" role="group" aria-label="Lecture preview size"><span>Preview size</span>{[["compact", "Compact"], ["normal", "Default"], ["large", "Large"]].map(([value, label]) => <button key={value} type="button" className={previewSize === value ? "selected" : ""} aria-pressed={previewSize === value} onClick={() => setPreviewSize(value)}>{label}</button>)}</div>
-      {src && pdf ? <iframe className="document-viewer" src={`${src}#zoom=${activePdfZoom}`} title={lecture.title} /> : youtube ? <iframe className="video-viewer" src={src} title={lecture.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : src && lecture.fileType?.startsWith("video/") ? <video className="video-viewer" controls src={src} /> : hasTextPreview ? <article className="notes-text-preview" aria-label={`${lecture.title} extracted notes`}><h2>{lecture.fileName || "Lecture notes"}</h2><div>{lecture.lectureContent}</div></article> : <div className="file-preview"><span className="file-icon large">▤</span><h2>{lecture.fileName || "Your lecture notes"}</h2><p>{lecture.fileName ? "This file is ready to open or download." : "Use the description below as a starting point for your review."}</p>{lecture.fileData && <a className="button secondary" href={lecture.fileData} download={lecture.fileName}>Download file</a>}</div>}
+      {src && pdf ? <iframe className="document-viewer" src={`${src}#zoom=page-fit`} title={lecture.title} /> : youtube ? <iframe className="video-viewer" src={src} title={lecture.title} allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /> : src && lecture.fileType?.startsWith("video/") ? <video className="video-viewer" controls src={src} /> : hasTextPreview ? <article className="notes-text-preview" aria-label={`${lecture.title} extracted notes`}><h2>{lecture.fileName || "Lecture notes"}</h2><div>{lecture.lectureContent}</div></article> : <div className="file-preview"><span className="file-icon large">▤</span><h2>{lecture.fileName || "Your lecture notes"}</h2><p>{lecture.fileName ? "This file is ready to open or download." : "Use the description below as a starting point for your review."}</p>{lecture.fileData && <a className="button secondary" href={lecture.fileData} download={lecture.fileName}>Download file</a>}</div>}
       <div className="viewer-description"><p className="eyebrow">LECTURE NOTES</p><p>{lecture.description || "No description was added for this lecture."}</p>{lecture.fileName && !lecture.fileData && <p className="muted small-text">The file name is saved in your library. Reattach files up to 3 MB for an in-app preview; YouTube links can be pasted as the file URL when adding a lecture.</p>}<button className="button secondary summarize-button" onClick={onSummarize} disabled={summarizing}>{summarizing ? "Summarizing notes…" : "✦ Summarize notes"}</button>{lecture.summary && <div className="lecture-summary" aria-live="polite"><p className="eyebrow">SUMMARY</p><SummaryContent text={lecture.summary} /></div>}</div>
     </section>
-    <div className="viewer-actions"><button className="button primary" onClick={onToggle}>{lecture.studied ? "✓ Studied · Mark for review" : "✓ Mark as studied"}</button><button className="button secondary" onClick={onSchedule}>＋ Add to schedule</button><button className="button secondary" onClick={onQuiz}>✧ Quiz me</button></div>
-  </>;
+    <div className="viewer-actions">
+  <button className="button primary" onClick={onToggle}>
+    {lecture.studied
+      ? "✓ Studied · Mark for review"
+      : "✓ Mark as studied"}
+  </button>
+
+  <button className="button secondary" onClick={onSchedule}>
+    ＋ Add to schedule
+  </button>
+
+  <button className="button primary" onClick={onQuiz} disabled={generating}>
+    {generating ? "Generating your quiz…" : "✧ Generate Quiz Now"}
+  </button>
+
+  <button className="button secondary" onClick={onCustomizeSettings} disabled={generating}>
+    Customize quiz
+  </button>
+
+  <button className="button secondary" onClick={onSummarize}>
+    ✨ Summarize notes
+  </button>
+</div>
+</>
 }
 
 function normalizeSummaryMath(text) {
@@ -847,11 +1261,38 @@ function SummaryContent({ text }) {
   flushList();
   return <div className="summary-content">{blocks}</div>;
 }
-function QuizOptions({ lecture, onStart, onBack }) {
+function QuizOptions({ lecture, onStart, onBack, isGenerating, error }) {
   const [difficulty, setDifficulty] = useState("Medium");
   const [count, setCount] = useState(5);
   const [type, setType] = useState("Multiple choice");
-  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-options-panel"><p className="eyebrow">QUIZ SETUP · {lecture.subject}</p><h1>{lecture.title}</h1><p className="subheading">Questions are selected from this lecture’s question bank or generated from its notes.</p><div className="quiz-settings-grid"><label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option>Easy</option><option>Medium</option><option>Hard</option></select><small>{difficulty === "Easy" ? "Recall key terms and definitions." : difficulty === "Hard" ? "Analyze and apply related ideas." : "Explain concepts and connect ideas."}</small></label><label>Questions<select value={count} onChange={(event) => setCount(Number(event.target.value))}><option value="5">5 questions</option><option value="10">10 questions</option><option value="20">20 questions</option></select></label><label>Question type<select value={type} onChange={(event) => setType(event.target.value)}><option>Multiple choice</option><option>Multi-select</option><option>True / False</option><option>Problem solving</option><option>Mixed</option></select><small>Questions remain grounded in this lecture’s question set.</small></label></div><div className="form-actions"><button className="button secondary" onClick={onBack}>Cancel</button><button className="button primary" onClick={() => onStart({ difficulty, count, type })}>Start quiz →</button></div></section></>;
+  const [includeExplanations, setIncludeExplanations] = useState(true);
+  const [customizing, setCustomizing] = useState(false);
+  const settings = { difficulty, count, type, includeExplanations };
+  return <>
+    <button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button>
+    <section className="panel quiz-options-panel">
+      <p className="eyebrow">GENERATE A QUIZ · {lecture.subject}</p>
+      <h1>{lecture.title}</h1>
+      <p className="subheading">Start right away with five medium-difficulty multiple-choice questions, or optionally choose your settings.</p>
+      <button className="button primary quiz-generate-now" disabled={isGenerating} onClick={() => onStart(DEFAULT_QUIZ_SETTINGS)}>
+        {isGenerating ? "Generating your quiz…" : "Generate Quiz Now"}
+      </button>
+      <button type="button" className="quiz-customize-toggle" aria-expanded={customizing} onClick={() => setCustomizing((open) => !open)}>
+        {customizing ? "Hide customization ▲" : "Customize Quiz ▼"}
+      </button>
+      {customizing && <div className="quiz-custom-panel">
+        <div className="quiz-settings-grid">
+          <label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option>Easy</option><option>Medium</option><option>Hard</option></select><small>{difficulty === "Easy" ? "Recall key terms and definitions." : difficulty === "Hard" ? "Analyze and apply related ideas." : "Explain concepts and connect ideas."}</small></label>
+          <label>Questions<select value={count} onChange={(event) => setCount(Number(event.target.value))}><option value="5">5 questions</option><option value="10">10 questions</option><option value="15">15 questions</option><option value="20">20 questions</option></select></label>
+          <label>Question type<select value={type} onChange={(event) => setType(event.target.value)}><option>Multiple choice</option><option>True / False</option><option>Mixed</option><option>Multi-select</option><option>Problem solving</option></select><small>Every question is grounded in the selected lecture.</small></label>
+        </div>
+        <label className="quiz-explanation-setting"><input type="checkbox" checked={includeExplanations} onChange={(event) => setIncludeExplanations(event.target.checked)} /> Include short explanations for correct answers</label>
+        <div className="form-actions"><button className="button primary" disabled={isGenerating} onClick={() => onStart(settings)}>{isGenerating ? "Generating your quiz…" : "Generate Customized Quiz"}</button></div>
+      </div>}
+      {isGenerating && <p className="quiz-generation-status" role="status">Generating your quiz from the lecture content…</p>}
+      {error && <p className="quiz-setup-message" role="alert">{error}</p>}
+    </section>
+  </>;
 }
 
 function QuizRun({ state, lecture, onChange, onFinish, onRetry, onReview, onBack }) {
@@ -860,7 +1301,7 @@ function QuizRun({ state, lecture, onChange, onFinish, onRetry, onReview, onBack
   const selected = state.answers[index] || "";
   const submitted = Boolean(state.submitted[index]);
   const isCorrect = answerMatches(question, selected);
-  const progress = percent(index + (submitted ? 1 : 0), state.questions.length);
+  const progress = getQuizProgress(state.submitted, state.questions.length);
   const elapsed = Math.max(0, Math.round((Date.now() - state.startedAt) / 1000));
   function update(changes) { onChange((current) => ({ ...current, ...changes })); }
   function choose(option) {
@@ -880,23 +1321,80 @@ function QuizRun({ state, lecture, onChange, onFinish, onRetry, onReview, onBack
     }
     update({ submitted: { ...state.submitted, [index]: true } });
   }
-  function previous() { update({ index: Math.max(0, index - 1) }); }
-  function next() { update({ index: Math.min(state.questions.length - 1, index + 1) }); }
+  function previous() { update({ index: getQuizQuestionIndex(index, -1, state.questions.length) }); }
+  function next() { update({ index: getQuizQuestionIndex(index, 1, state.questions.length) }); }
   if (state.done) {
     const mistakes = state.questions.filter((item, i) => !answerMatches(item, state.answers[i])).length;
     const seconds = state.attempt?.seconds || elapsed;
     const scorePct = percent(state.score, state.questions.length);
     return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-wrap quiz-result"><div className="quiz-success">{scorePct >= 70 ? "✓" : "↗"}</div><p className="eyebrow">QUIZ RESULTS · {state.config?.difficulty || "Medium"}</p><h1>{scorePct >= 80 ? "Excellent work!" : scorePct >= 60 ? "Good progress—keep practicing." : "A good starting point for review."}</h1><p className="subheading">{lecture.title}</p><div className="score-circle"><strong>{scorePct}%</strong><span>score</span></div><div className="score-details"><div><strong>{state.score}</strong><span>Correct</span></div><div><strong>{mistakes}</strong><span>Incorrect</span></div><div><strong>{Math.floor(seconds / 60)}m {seconds % 60}s</strong><span>Time</span></div></div>{scorePct < 60 && <p className="quiz-low-score">Review this topic before your next attempt to strengthen your mastery.</p>}<div className="quiz-result-actions">{mistakes > 0 && <button className="button secondary" onClick={onReview}>Review mistakes</button>}<button className="button primary" onClick={onRetry}>↻ Try again</button><button className="button secondary" onClick={onBack}>Back to quizzes</button></div></section></>;
   }
-  return <><button className="back-link" onClick={() => { if (window.confirm("Leave this quiz? Your current answers will be lost.")) onBack(); }}>← &nbsp;Exit quiz</button><section className="panel quiz-wrap quiz-run-panel"><div className="quiz-top"><div><p className="eyebrow">{lecture.subject} · {state.config?.difficulty || "Medium"}</p><h1>{lecture.title}</h1></div><span className="quiz-counter">{String(index + 1).padStart(2, "0")} / {String(state.questions.length).padStart(2, "0")}</span></div><div className="quiz-progress-track"><span style={{ width: `${Math.max(5, progress)}%` }} /></div><div className="quiz-run-content"><p className="question-label">QUESTION {index + 1} · {question.type || state.config?.type || "Multiple choice"}</p><h2 className="quiz-question">{question.question}</h2><div className="quiz-options">{question.options.map((option, choiceIndex) => { const isSelected = Array.isArray(selected) ? selected.includes(option) : selected === option; const isRight = Array.isArray(question.correctAnswer) ? question.correctAnswer.includes(option) : question.correctAnswer === option; return <button key={`${option}-${choiceIndex}`} type="button" className={`quiz-option ${isSelected ? "selected" : ""} ${submitted && isRight ? "correct" : ""} ${submitted && isSelected && !isRight ? "incorrect" : ""}`} disabled={submitted} aria-pressed={isSelected} onClick={() => choose(option)}><span className="quiz-choice-letter">{String.fromCharCode(65 + choiceIndex)}</span><span className="quiz-option-text">{option}</span>{submitted && isRight && <span className="quiz-option-mark">✓</span>}</button>; })}</div>{!submitted && <div className="quiz-hint-area"><button className="text-button" type="button" onClick={() => update({ hints: { ...state.hints, [index]: true } })}>Show hint</button>{state.hints[index] && <p className="quiz-hint">{question.hint}</p>}</div>}{submitted && <div className={`quiz-feedback ${isCorrect ? "is-correct" : "is-incorrect"}`} role="status"><strong>{isCorrect ? "That’s right." : `Not quite. The answer is: ${answerText(question.correctAnswer)}`}</strong><p>{question.explanation}</p></div>}</div><div className="quiz-run-footer"><span>{index + 1} of {state.questions.length} questions</span><div><button className="button secondary" onClick={previous} disabled={index === 0}>← Previous</button>{submitted && index < state.questions.length - 1 ? <button className="button primary" onClick={next}>Next question →</button> : <button className="button primary" onClick={submitCurrent} disabled={!selected || (Array.isArray(selected) && !selected.length)}>{submitted ? "Finish quiz" : "Submit answer"}</button>}</div></div></section></>;
+  return <><button className="back-link" onClick={() => { if (window.confirm("Leave this quiz? Your current answers will be lost.")) onBack(); }}>← &nbsp;Exit quiz</button><section className="panel quiz-wrap quiz-run-panel"><div className="quiz-top"><div><p className="eyebrow">{lecture.subject} · {state.config?.difficulty || "Medium"}</p><h1>{lecture.title}</h1></div><span className="quiz-counter">{String(index + 1).padStart(2, "0")} / {String(state.questions.length).padStart(2, "0")}</span></div><div className="quiz-progress-track"><span style={{ width: `${Math.max(5, progress)}%` }} /></div><div className="quiz-run-content"><p className="question-label">QUESTION {index + 1} · {question.type || state.config?.type || "Multiple choice"}</p><h2 className="quiz-question">{question.question}</h2><div className="quiz-options">{question.options.map((option, choiceIndex) => { const isSelected = Array.isArray(selected) ? selected.includes(option) : selected === option; const isRight = Array.isArray(question.correctAnswer) ? question.correctAnswer.includes(option) : question.correctAnswer === option; return <button key={`${option}-${choiceIndex}`} type="button" className={`quiz-option ${isSelected ? "selected" : ""} ${submitted && isRight ? "correct" : ""} ${submitted && isSelected && !isRight ? "incorrect" : ""}`} disabled={submitted} aria-pressed={isSelected} onClick={() => choose(option)}><span className="quiz-choice-letter">{String.fromCharCode(65 + choiceIndex)}</span><span className="quiz-option-text">{option}</span>{submitted && isRight && <span className="quiz-option-mark">✓</span>}</button>; })}</div>{!submitted && <div className="quiz-hint-area"><button className="text-button" type="button" onClick={() => update({ hints: { ...state.hints, [index]: true } })}>Show hint</button>{state.hints[index] && <p className="quiz-hint">{question.hint}</p>}</div>}{submitted && <div className={`quiz-feedback ${isCorrect ? "is-correct" : "is-incorrect"}`} role="status"><strong>{isCorrect ? "That’s right." : `Not quite. The answer is: ${answerText(question.correctAnswer)}`}</strong>{question.explanation && <p>{question.explanation}</p>}</div>}</div><div className="quiz-run-footer"><span>{index + 1} of {state.questions.length} questions</span><div><button className="button secondary" onClick={previous} disabled={index === 0}>← Previous</button>{submitted && index < state.questions.length - 1 ? <button className="button primary" onClick={next}>Next question →</button> : <button className="button primary" onClick={submitCurrent} disabled={!selected || (Array.isArray(selected) && !selected.length)}>{submitted ? "Finish quiz" : "Submit answer"}</button>}</div></div></section></>;
 }
 
 function QuizReview({ state, lecture, onStudy, onRetry, onBack }) {
   const mistakes = state.questions.map((question, index) => ({ question, index })).filter(({ question, index }) => !answerMatches(question, state.answers[index]));
-  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to results</button><section className="quiz-review"><PageHeading eyebrow="LEARN FROM MISSES" title="Review mistakes" subtitle={`${mistakes.length} question${mistakes.length === 1 ? "" : "s"} to revisit in ${lecture.title}.`} />{mistakes.map(({ question, index }) => <article className="panel quiz-review-card" key={question.id}><p className="question-label">QUESTION {index + 1} · {question.topic}</p><h2>{question.question}</h2><p><span>Your answer</span><strong>{answerText(state.answers[index])}</strong></p><p><span>Correct answer</span><strong>{answerText(question.correctAnswer)}</strong></p><p className="quiz-review-explanation">{question.explanation}</p><button className="text-button" onClick={onStudy}>Study this topic →</button></article>)}{!mistakes.length && <div className="panel"><p>No mistakes to review. Nice work!</p></div>}<div className="quiz-result-actions"><button className="button primary" onClick={onRetry}>Try again</button><button className="button secondary" onClick={onStudy}>Back to lesson</button></div></section></>;
+  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to results</button><section className="quiz-review"><PageHeading eyebrow="LEARN FROM MISSES" title="Review mistakes" subtitle={`${mistakes.length} question${mistakes.length === 1 ? "" : "s"} to revisit in ${lecture.title}.`} />{mistakes.map(({ question, index }) => <article className="panel quiz-review-card" key={question.id}><p className="question-label">QUESTION {index + 1} · {question.topic}</p><h2>{question.question}</h2><p><span>Your answer</span><strong>{answerText(state.answers[index])}</strong></p><p><span>Correct answer</span><strong>{answerText(question.correctAnswer)}</strong></p>{question.explanation && <p className="quiz-review-explanation">{question.explanation}</p>}<button className="text-button" onClick={onStudy}>Study this topic →</button></article>)}{!mistakes.length && <div className="panel"><p>No mistakes to review. Nice work!</p></div>}<div className="quiz-result-actions"><button className="button primary" onClick={onRetry}>Try again</button><button className="button secondary" onClick={onStudy}>Back to lesson</button></div></section></>;
 }
 
-function QuizHistory({ attempts, lectures, onQuiz, onCustomize, generatingLectureId }) { return <><PageHeading eyebrow="PRACTICE, REFLECT, REPEAT" title="Quizzes" subtitle="Practice with questions from your lecture notes. Your scores and topic mastery are saved on this device." /><div className="quiz-start-grid">{lectures.map((lecture) => { const count = getLectureQuestions(lecture).length; const hasMaterial = Boolean(lecture.lectureContent || lecture.fileData); const busy = generatingLectureId === lecture.id; const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; return <article className="panel quiz-start-card" key={lecture.id}><div className="quiz-card-icon">✧</div><span className="subject-label">{lecture.subject}</span><h2>{lecture.title}</h2><p>{count ? `${count} lecture-specific questions · Unlimited attempts` : hasMaterial ? "Generate questions from this lecture's content" : "Add notes or a transcript to generate a quiz"}</p>{best !== null && <p className="quiz-topic-stat">Best {best}% · Average {average}% across {topicAttempts.length} attempt{topicAttempts.length === 1 ? "" : "s"}</p>}<button className="button primary" disabled={busy} onClick={() => onQuiz(lecture)}>{busy ? "Preparing…" : count ? "Set up quiz" : hasMaterial ? "Generate quiz" : "Build quiz"} <span>{busy ? "…" : "→"}</span></button>{count > 0 && <button className="quiz-customize-button" onClick={() => onCustomize(lecture)}>Create questions <span>(optional)</span></button>}</article>; })}</div><section className="panel history-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR PRACTICE LOG</p><h2>Quiz history <span className="pill-count">{attempts.length}</span></h2></div></div>{attempts.length ? <div className="history-table"><div className="history-head"><span>QUIZ</span><span>DATE</span><span>SCORE</span><span>RESULT</span></div>{attempts.map((a) => <div className="history-row" key={a.id}><div><strong>{a.title}</strong><small>{a.subject} · {a.difficulty || "Medium"}</small></div><span>{new Date(a.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span><strong>{a.score}/{a.total}</strong><span className="result-pill">{percent(a.score, a.total)}%</span></div>)}</div> : <Empty text="Your quiz attempts will show up here." />}</section></>; }
+function QuizHistory({ attempts, lectures, savedQuizzes, onQuiz, onCustomizeSettings, onEditQuestions, onOpenSaved, generatingLectureId, error }) {
+  return <>
+    <PageHeading eyebrow="PRACTICE, REFLECT, REPEAT" title="Quizzes" subtitle="Generate a quiz right away or optionally customize it. Your saved quizzes and scores sync to your account." />
+    {error && <p className="quiz-setup-message" role="alert">{error}</p>}
+    <div className="quiz-start-grid">
+      {lectures.map((lecture) => {
+        const count = getLectureQuestions(lecture).length;
+        const hasMaterial = Boolean(
+          lecture.lectureContent?.trim()
+          || lecture.summary?.trim()
+          || (lecture.description?.trim().length || 0) >= 80
+          || (lecture.fileData && !lecture.fileType?.startsWith("video/"))
+          || count,
+        );
+        const busy = generatingLectureId === lecture.id;
+        const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id);
+        const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null;
+        const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null;
+        return <article className="panel quiz-start-card" key={lecture.id}>
+          <div className="quiz-card-icon">✧</div>
+          <span className="subject-label">{lecture.subject}</span>
+          <h2>{lecture.title}</h2>
+          <p>{count ? `${count} lecture-specific questions · Unlimited attempts` : hasMaterial ? "Generate questions from this lecture's content" : "Add notes or a transcript to generate a quiz"}</p>
+          {best !== null && <p className="quiz-topic-stat">Best {best}% · Average {average}% across {topicAttempts.length} attempt{topicAttempts.length === 1 ? "" : "s"}</p>}
+          <div className="quiz-start-actions">
+            <button className="button primary" disabled={Boolean(generatingLectureId) || !hasMaterial} title={!hasMaterial ? "Add lecture notes or a transcript first." : ""} onClick={() => onQuiz(lecture)}>
+              {busy ? "Generating your quiz…" : "Generate Quiz Now"}
+            </button>
+            <button className="button secondary" disabled={Boolean(generatingLectureId)} onClick={() => onCustomizeSettings(lecture)}>Customize Quiz</button>
+          </div>
+          {count > 0 && <button className="quiz-customize-button" disabled={busy} onClick={() => onEditQuestions(lecture)}>Edit question bank <span>(optional)</span></button>}
+        </article>;
+      })}
+    </div>
+    {savedQuizzes.length > 0 && <section className="panel saved-quizzes-panel">
+      <div className="panel-heading"><div><p className="eyebrow">READY WHEN YOU ARE</p><h2>Saved quizzes <span className="pill-count">{savedQuizzes.length}</span></h2></div></div>
+      <div className="saved-quiz-list">
+        {[...savedQuizzes].sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || "")).map((quiz) => (
+          <article className="saved-quiz-row" key={quiz.id}>
+            <div><strong>{quiz.title}</strong><span>{quiz.subject} · {quiz.questions?.length || 0} questions · {quiz.config?.difficulty || "Medium"}</span></div>
+            <button className="button secondary small" onClick={() => onOpenSaved(quiz)}>Reopen quiz →</button>
+          </article>
+        ))}
+      </div>
+    </section>}
+    <section className="panel history-panel">
+      <div className="panel-heading"><div><p className="eyebrow">YOUR PRACTICE LOG</p><h2>Quiz history <span className="pill-count">{attempts.length}</span></h2></div></div>
+      {attempts.length ? <div className="history-table">
+        <div className="history-head"><span>QUIZ</span><span>DATE</span><span>SCORE</span><span>RESULT</span></div>
+        {attempts.map((attempt) => <div className="history-row" key={attempt.id}>
+          <div><strong>{attempt.title}</strong><small>{attempt.subject} · {attempt.difficulty || "Medium"}</small></div>
+          <span>{new Date(attempt.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</span>
+          <strong>{attempt.score}/{attempt.total}</strong><span className="result-pill">{percent(attempt.score, attempt.total)}%</span>
+        </div>)}
+      </div> : <Empty text="Your quiz attempts will show up here." />}
+    </section>
+  </>;
+}
 function ProgressPage({ lectures, attempts, studied, completion }) { const scores = attempts.map((a) => percent(a.score, a.total)); const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0; const highest = scores.length ? Math.max(...scores) : 0; const subjects = [...new Set(lectures.map((l) => l.subject))]; const topics = lectures.map((lecture) => { const topicAttempts = attempts.filter((attempt) => attempt.lectureId === lecture.id); const average = topicAttempts.length ? Math.round(topicAttempts.reduce((sum, attempt) => sum + percent(attempt.score, attempt.total), 0) / topicAttempts.length) : null; const best = topicAttempts.length ? Math.max(...topicAttempts.map((attempt) => percent(attempt.score, attempt.total))) : null; return { lecture, average, best, tries: topicAttempts.length }; }); const needsReview = topics.filter((topic) => topic.average !== null && topic.average < 60); return <><PageHeading eyebrow="NOTICE HOW FAR YOU'VE COME" title="Your progress" subtitle="A simple snapshot of your study habits and quiz practice." /><div className="stats-grid progress-stats"><Stat icon="✓" tint="mint" label="Study progress" value={`${studied} / ${lectures.length}`} foot={`${completion}% of lectures studied`} /><Stat icon="✧" tint="lavender" label="Quizzes taken" value={attempts.length} foot="Every attempt counts" /><Stat icon="↗" tint="peach" label="Average score" value={`${avg}%`} foot={attempts.length ? "Across all your attempts" : "Your first quiz is waiting"} /><Stat icon="★" tint="blue" label="Personal best" value={`${highest}%`} foot="Your highest quiz score" /></div><ScoreTrendChart attempts={attempts} /><section className="panel subject-progress"><div className="panel-heading"><div><p className="eyebrow">ONE STEP AT A TIME</p><h2>Progress by subject</h2></div></div>{subjects.length ? subjects.map((subject, index) => { const group = lectures.filter((l) => l.subject === subject); const done = group.filter((l) => l.studied).length; const value = percent(done, group.length); return <div className="subject-progress-row" key={subject}><div className="subject-row-label"><div className={`subject-icon subject-color-${index % 4}`}>{subject.slice(0, 1)}</div><strong>{subject}</strong><span>{done} of {group.length} studied</span><b>{value}%</b></div><ProgressBar value={value} color={index % 2 ? "purple" : "green"} /></div>; }) : <Empty text="Add lectures to see progress by subject." />}</section><section className="panel subject-progress quiz-mastery"><div className="panel-heading"><div><p className="eyebrow">QUIZ MASTERY</p><h2>Progress by topic</h2></div></div>{topics.length ? topics.map(({ lecture, average, best, tries }) => <div className="quiz-mastery-row" key={lecture.id}><div><strong>{lecture.title}</strong><span>{tries ? `${tries} attempt${tries === 1 ? "" : "s"} · Best ${best}% · Average ${average}%` : "No quiz attempts yet"}</span></div>{average !== null && <b className={average < 60 ? "needs-review" : ""}>{average}%</b>}</div>) : <Empty text="Add lectures to see quiz mastery." />}{needsReview.length > 0 && <p className="quiz-review-reminder">Review suggested: {needsReview.map(({ lecture }) => lecture.title).join(", ")}. A short revision session may help.</p>}</section><section className="panel study-insight"><span>✦</span><div><strong>Progress is built one session at a time.</strong><p>Keep checking off topics and revisiting quizzes to see your confidence grow.</p></div></section></>; }
 
 export default App;

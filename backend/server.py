@@ -1,4 +1,4 @@
-"""Local Gemini endpoint for Studyspace lecture summaries."""
+"""Local Gemini endpoints for Studyspace summaries and quiz generation."""
 
 import json
 import os
@@ -10,6 +10,8 @@ from threading import Lock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from google import genai
+
+from quiz_generation import build_quiz_prompt, parse_quiz_response, validate_quiz_request
 
 
 HOST = "127.0.0.1"
@@ -29,8 +31,8 @@ ALLOWED_ORIGINS = {
     "http://127.0.0.1:4173",
 }
 
-# Keep the SDK's HTTP client alive across requests. The summary endpoint uses a
-# threaded server, so guard creation and API-key changes with a lock.
+# Keep the SDK's HTTP client alive across requests. The threaded service can
+# handle summaries and quiz generation concurrently, so guard client updates.
 _gemini_client = None
 _gemini_api_key = None
 _gemini_client_lock = Lock()
@@ -47,7 +49,7 @@ def get_gemini_client(api_key):
         return _gemini_client
 
 
-class SummaryHandler(BaseHTTPRequestHandler):
+class GeminiHandler(BaseHTTPRequestHandler):
     def _json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -73,6 +75,50 @@ class SummaryHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        if self.path == "/api/summarize":
+            self._handle_summarize()
+            return
+        if self.path == "/api/generate-quiz":
+            self._handle_generate_quiz()
+            return
+        self._json(404, {"error": "Endpoint not found."})
+
+    def _handle_generate_quiz(self):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            self._json(503, {"error": "Set GEMINI_API_KEY in the terminal running the Python Gemini service."})
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > MAX_REQUEST_BYTES:
+                self._json(413, {"error": "The lecture source is empty or too large to generate a quiz."})
+                return
+            payload = json.loads(self.rfile.read(length))
+            request = validate_quiz_request(payload)
+        except OverflowError as error:
+            self._json(413, {"error": str(error)})
+            return
+        except (ValueError, TypeError, json.JSONDecodeError) as error:
+            self._json(400, {"error": str(error) or "The quiz request was not valid JSON."})
+            return
+
+        try:
+            response = get_gemini_client(api_key).models.generate_content(
+                model=MODEL,
+                contents=build_quiz_prompt(request),
+                config={"response_mime_type": "application/json"},
+            )
+            questions = parse_quiz_response(response.text or "", request)
+            self._json(200, {"questions": questions})
+        except ValueError as error:
+            self._json(502, {"error": str(error)})
+        except Exception as error:
+            details = str(error).replace(api_key, "[REDACTED]")[:500]
+            print(f"Gemini quiz request failed ({type(error).__name__}): {details}", flush=True)
+            self._json(502, {"error": "Gemini could not generate a valid quiz. Check the Python service terminal for details and try again."})
+
+    def _handle_summarize(self):
         if self.path != "/api/summarize":
             self._json(404, {"error": "Endpoint not found."})
             return
@@ -211,6 +257,6 @@ class SummaryHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Studyspace summary service listening at http://{HOST}:{PORT}")
+    print(f"Studyspace Gemini service listening at http://{HOST}:{PORT}")
     print("Set GEMINI_API_KEY in this terminal before starting the service.")
-    ThreadingHTTPServer((HOST, PORT), SummaryHandler).serve_forever()
+    ThreadingHTTPServer((HOST, PORT), GeminiHandler).serve_forever()

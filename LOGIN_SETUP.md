@@ -1,20 +1,55 @@
-# Sign-in setup
+# Firebase sign-in and cloud data setup
 
-Sign-up asks for a name, email, password, and password confirmation. Log in checks the saved local account. Passwords are salted and hashed with the browser Web Crypto API; the plain password is not saved. Accounts and study data stay in localStorage on this device. This is still a local demo, not secure server-backed authentication, and it does not sync data between devices.
+The app uses Firebase Authentication for account identity and Cloud Firestore for user data. Existing local accounts and study records remain in browser storage and are not imported automatically. Users must register a Firebase account; local password hashes cannot be converted into Firebase credentials.
 
-After sign-in, choose **Yes, stay signed in** to remember the profile on this device, or **No, just for this session** to sign out when the browser is refreshed or closed.
+## Configure the Firebase web app
 
-To enable Google Identity Services:
+1. In Firebase Console, create or select a project and register a **Web app**.
+2. Copy the web app's configuration values into a local `.env.local` file based on `.env.example`:
 
-1. Create a Google OAuth **Web application** client in Google Cloud Console.
-2. Add `http://localhost:5173` as an authorized JavaScript origin.
-3. Copy `.env.example` to `.env.local` and replace its placeholder with the client ID.
-4. Restart the Vite dev server.
+   ```dotenv
+   VITE_FIREBASE_API_KEY=...
+   VITE_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
+   VITE_FIREBASE_PROJECT_ID=your-project-id
+   VITE_FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
+   VITE_FIREBASE_MESSAGING_SENDER_ID=...
+   VITE_FIREBASE_APP_ID=...
+   ```
 
-The client ID is public configuration; never put a Google client secret in this frontend project. A production app should send the returned credential to a backend and verify it there. This prototype only reads the profile for a local browser session.
+3. In **Authentication → Sign-in method**, enable **Email/Password** and **Google**. Add your development and production hostnames under **Authentication → Settings → Authorized domains**.
+4. Create a **Cloud Firestore** database.
+5. Open **Firestore Database → Rules**, replace the editor contents with [`firestore.rules`](./firestore.rules), and click **Publish**.
+6. Restart the Vite development server after changing `.env.local`.
+
+These Firebase Web App values are client configuration, not service-account credentials. Do not put a Google client secret, Firebase Admin SDK key, or service-account JSON in the frontend or `.env.local`.
+
+## Firestore layout
+
+- `users/{uid}/lectures/{lectureId}` — lecture fields, checklist completion, resource name/type metadata, notes, and question sets.
+- `users/{uid}/sessions/{sessionId}` — scheduled study sessions and completion status.
+- `users/{uid}/quizzes/{quizId}` — complete saved quiz settings and question arrays, including choices, answers, hints, and explanations.
+- `users/{uid}/quizAttempts/{attemptId}` — score, duration, lecture/topic, date, difficulty, and question type.
+- `users/{uid}/profile/preferences` — profile details, display name, theme, and time format.
+
+Study progress is calculated from the lecture and quiz-attempt records. Original upload bytes are not stored in Firestore; a selected file's preview is cached only in that browser, while metadata and extracted text sync through Firestore.
+
+## Verify saving and retrieval
+
+1. Start the app with `npm.cmd run dev`, register a Firebase account, and choose **Yes, stay signed in**.
+2. Add a lecture and a study session, mark a lecture studied, and complete a quiz.
+3. In Firebase Console, inspect the signed-in user's UID under **Firestore Database → Data** and confirm the corresponding lecture, session, quiz-attempt, and profile documents exist.
+4. Refresh the page. Confirm the records load again and the interface reflects the saved completion/progress state.
+5. Sign in to the same Firebase account in another browser/device. Confirm the same records appear. File previews are local-only; reattach their files on that device if needed.
+6. Sign in as a different Firebase user and confirm those records are not visible.
+
+If Firestore rejects reads or writes, verify that the published rules match [`firestore.rules`](./firestore.rules), both Authentication providers are enabled, and the app's Firebase project values belong to the same project. Do not treat the data as protected until the rules are published and these tests pass.
+
+## Sign-in persistence
+
+After sign-in, **Yes, stay signed in** selects browser-local Firebase Auth persistence. **No, just for this session** selects browser-session persistence. Signing out does not delete Firestore records.
 
 # Lecture quizzes
 
-Built-in topic quizzes contain 10 questions. For other lectures, the app can extract text from PDF, DOCX, and PPTX files, then create 10–15 fill-in-the-blank practice questions from readable sentences in that material. This is a local text-based generator, not an AI model; customize the generated set or add questions with the optional button. Older DOC/PPT files should be converted to DOCX/PPTX first.
+**Generate Quiz Now** immediately requests five medium-difficulty multiple-choice questions with explanations. **Customize Quiz** optionally selects 5, 10, 15, or 20 questions, question type, difficulty, and whether explanations are included. Both actions use the same Gemini endpoint and require readable lecture text; supported PDF, DOCX, PPTX, and text files are extracted in the browser. Saved quiz records include every question and answer choice and can be reopened from the Quizzes page without another AI request.
 
-Video files and YouTube links need captions or a transcript pasted into the lecture notes field. This version does not transcribe audio or send lecture files to an AI service. The generator needs enough readable text to make at least 10 questions; otherwise it opens the question editor with any questions it could create so the set can be completed.
+To generate quizzes, start the local Python Gemini service using the instructions in the README and set `GEMINI_API_KEY` in that service's terminal. The key is never sent to the browser. Video uploads and YouTube links need captions, a transcript, or a summary in the lecture notes; the quiz endpoint does not transcribe audio or process video. If Gemini returns an incomplete or invalid set, the app shows an error instead of launching a short quiz. Older DOC/PPT files should be converted to DOCX/PPTX first.
