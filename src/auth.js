@@ -6,6 +6,7 @@ import {
   setPersistence,
   signInWithEmailAndPassword,
   signInWithPopup,
+  sendPasswordResetEmail,
   signOut,
   updateProfile,
 } from "firebase/auth";
@@ -56,6 +57,10 @@ export async function signInWithGoogle() {
   return credential.user;
 }
 
+export async function sendFirebasePasswordReset(email) {
+  await sendPasswordResetEmail(getAuthInstance(), email.trim());
+}
+
 export async function setFirebasePersistence(rememberUser) {
   await setPersistence(
     getAuthInstance(),
@@ -75,15 +80,15 @@ export async function updateFirebaseDisplayName(name) {
 
 export function getAuthErrorMessage(error) {
   const messages = {
-    "auth/email-already-in-use": "An account with this email already exists. Sign in instead.",
+    "auth/email-already-in-use": "An account with this email already exists. Please sign in instead.",
     "auth/invalid-credential": "The email or password is incorrect.",
-    "auth/invalid-email": "Enter a valid email address.",
+    "auth/invalid-email": "Please enter a valid email address.",
     "auth/operation-not-allowed": "This sign-in method is not enabled in Firebase Authentication.",
     "auth/popup-closed-by-user": "The Google sign-in window was closed before completing sign-in.",
     "auth/popup-blocked": "Your browser blocked the Google sign-in window. Allow pop-ups and try again.",
     "auth/too-many-requests": "Too many attempts were made. Wait a moment and try again.",
-    "auth/weak-password": "Use a stronger password with at least 6 characters.",
-    "auth/network-request-failed": "Could not reach Firebase Authentication. Check your connection and try again.",
+    "auth/weak-password": "Your password is too weak. Please choose a stronger password.",
+    "auth/network-request-failed": "Network error. Please check your internet connection and try again.",
   };
-  return messages[error?.code] || error?.message || "Could not complete sign-in. Please try again.";
+  return messages[error?.code] || "Could not complete sign-in. Please try again.";
 }

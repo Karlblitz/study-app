@@ -17,6 +17,7 @@ import {
   createFirebaseAccount,
   getAuthErrorMessage,
   setFirebasePersistence,
+  sendFirebasePasswordReset,
   signInFirebaseAccount,
   signInWithGoogle,
   signOutFirebaseUser,
@@ -32,7 +33,7 @@ import {
   updateUserRecord,
 } from "./firestore.js";
 import { onAuthStateChanged } from "firebase/auth";
-import { Eye, EyeOff, FileText, FileVideo, X } from "lucide-react";
+import { Eye, EyeOff, FileText, FileVideo, X, Mail, LockKeyhole, ArrowRight, LoaderCircle } from "lucide-react";
 import { CalendarDays, Moon, Sun } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
@@ -218,6 +219,12 @@ function adaptQuizQuestion(question, mode, lectureTitle) {
 
 function App() {
   const [isStarting, setIsStarting] = useState(true);
+  const [collapsedSidebarWidth, setCollapsedSidebarWidth] = useState(() => {
+    try {
+      const savedWidth = Number(window.localStorage.getItem("studyspace-collapsed-sidebar-width"));
+      return Number.isFinite(savedWidth) && savedWidth > 0 ? Math.min(220, Math.max(56, savedWidth)) : 76;
+    } catch { return 76; }
+  });
   const [theme, setTheme] = useState("light");
   const [profile, setProfile] = useState(null);
   const [cloudError, setCloudError] = useState("");
@@ -601,7 +608,8 @@ function App() {
       const user = credentials.mode === "signup"
         ? await createFirebaseAccount(credentials)
         : await signInFirebaseAccount(credentials);
-      setAuthChoice({ uid: user.uid, name: user.displayName || user.email || "Student", email: user.email || "" });
+      if (credentials.mode === "login") await setFirebasePersistence(Boolean(credentials.remember));
+      else setAuthChoice({ uid: user.uid, name: user.displayName || user.email || "Student", email: user.email || "" });
       return "";
     } catch (error) { return getAuthErrorMessage(error); }
   }
@@ -786,7 +794,7 @@ if (!result.summary?.trim()) {
 
   if (isStarting) return <AppStartupSkeleton theme={theme} />;
 
-  return <SidebarProvider className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`} style={{ "--sidebar-width": "246px", "--sidebar-width-icon": "64px" }}>
+  return <SidebarProvider className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`} style={{ "--sidebar-width": "240px", "--sidebar-width-icon": `${collapsedSidebarWidth}px` }}>
     <Sidebar collapsible="icon" className="study-sidebar">
       <SidebarHeader className="study-sidebar-header">
         <button className="brand" type="button" onClick={() => go("home")} aria-label="Go to Studyspace homepage"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></button>
@@ -800,6 +808,7 @@ if (!result.summary?.trim()) {
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
+    <CollapsedSidebarResizer width={collapsedSidebarWidth} onWidthChange={setCollapsedSidebarWidth} />
     <SidebarInset className="main-area">
       <header className="topbar">
         <SidebarTrigger className="sidebar-trigger" aria-label="Toggle sidebar" />
@@ -871,6 +880,81 @@ function AppStartupSkeleton({ theme }) {
     </main>
     <span className="sr-only">Loading your study space…</span>
   </div>;
+}
+
+function CollapsedSidebarResizer({ width, onWidthChange }) {
+  const { open, isMobile } = useSidebar();
+  const [dragging, setDragging] = useState(false);
+  const startPointerId = useRef(null);
+  const clampWidth = (nextWidth) => Math.min(220, Math.max(56, Math.round(nextWidth)));
+
+  useEffect(() => {
+    if (!dragging) return undefined;
+    const handlePointerMove = (event) => {
+      if (event.pointerId !== startPointerId.current) return;
+      const nextWidth = clampWidth(event.clientX);
+      onWidthChange(nextWidth);
+      try { window.localStorage.setItem("studyspace-collapsed-sidebar-width", String(nextWidth)); } catch { /* Storage may be disabled. */ }
+    };
+    const stopDragging = (event) => {
+      if (event.pointerId !== startPointerId.current) return;
+      startPointerId.current = null;
+      setDragging(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+  }, [dragging, onWidthChange]);
+
+  function startDragging(event) {
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+    event.preventDefault();
+    event.stopPropagation();
+    startPointerId.current = event.pointerId;
+    setDragging(true);
+  }
+
+  function adjustWithKeyboard(event) {
+    const step = event.shiftKey ? 20 : 8;
+    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+      event.preventDefault();
+      const nextWidth = clampWidth(width - step);
+      onWidthChange(nextWidth);
+      try { window.localStorage.setItem("studyspace-collapsed-sidebar-width", String(nextWidth)); } catch { /* Storage may be disabled. */ }
+    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const nextWidth = clampWidth(width + step);
+      onWidthChange(nextWidth);
+      try { window.localStorage.setItem("studyspace-collapsed-sidebar-width", String(nextWidth)); } catch { /* Storage may be disabled. */ }
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const nextWidth = event.key === "Home" ? 56 : 220;
+      onWidthChange(nextWidth);
+      try { window.localStorage.setItem("studyspace-collapsed-sidebar-width", String(nextWidth)); } catch { /* Storage may be disabled. */ }
+    }
+  }
+
+  if (open || isMobile) return null;
+  return <button
+    type="button"
+    className="sidebar-resize-handle"
+    data-dragging={dragging ? "true" : undefined}
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize collapsed sidebar"
+    aria-valuemin={56}
+    aria-valuemax={220}
+    aria-valuenow={width}
+    aria-valuetext={`${width} pixels`}
+    title="Drag to resize sidebar; use arrow keys to adjust"
+    onPointerDown={startDragging}
+    onKeyDown={adjustWithKeyboard}
+  />;
 }
 
 function ProfileEditor({ profile, onSave, onClose, onLogout }) {
@@ -947,41 +1031,74 @@ function QuickAction({ icon, title, subtitle, onClick }) { return <button classN
 function Empty({ text, action, onClick }) { return <div className="empty-state"><span>✦</span><p>{text}</p>{action && <button className="text-button" onClick={onClick}>{action} →</button>}</div>; }
 
 function LoginScreen({ firebaseReady, missingConfig, authChoice, onLogin, onGoogleLogin, onFinish }) {
-  const [mode, setMode] = useState("signup");
+  const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [confirmPasswordError, setConfirmPasswordError] = useState("");
+  const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleError, setGoogleError] = useState("");
   async function submitCredentials(event) {
-    event.preventDefault(); setError("");
-    if (mode === "signup" && password !== confirmPassword) { setError("The passwords do not match."); return; }
+    event.preventDefault(); setError(""); setNotice("");
+    if (mode === "signup" && password !== confirmPassword) { setConfirmPasswordError("The passwords do not match."); return; }
+    setConfirmPasswordError("");
     if (mode === "signup" && password.length < 8) { setError("Use at least 8 characters for your password."); return; }
     setSubmitting(true);
-    const message = await onLogin({ mode, name, email, password });
+    const message = await onLogin({ mode, name, email, password, remember });
     setSubmitting(false); setError(message || "");
   }
-  function switchMode() { setMode(mode === "signup" ? "login" : "signup"); setPassword(""); setConfirmPassword(""); setError(""); }
-  async function continueWithGoogle() {
+  function switchMode() { setMode(mode === "signup" ? "login" : "signup"); setPassword(""); setConfirmPassword(""); setConfirmPasswordError(""); setError(""); setNotice(""); }
+  const existingAccountError = mode === "signup" && error === "An account with this email already exists. Please sign in instead.";
+  async function resetPassword() {
+    setError(""); setNotice("");
+    if (!email.trim()) { setError("Enter your email address first, then choose Forgot password?"); return; }
     setSubmitting(true);
-    setGoogleError("");
+    try { await sendFirebasePasswordReset(email); setNotice("Password reset email sent. Check your inbox."); }
+    catch (resetError) { setError(getAuthErrorMessage(resetError)); }
+    finally { setSubmitting(false); }
+  }
+  async function continueWithGoogle() {
+    setSubmitting(true); setGoogleError("");
     const message = await onGoogleLogin();
-    setSubmitting(false);
-    setGoogleError(message || "");
+    setSubmitting(false); setGoogleError(message || "");
   }
   if (authChoice) return <div className="auth-overlay"><Card className="auth-card stay-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">SIGN-IN PREFERENCE</p><h1>Stay signed in?</h1><p className="auth-intro">Keep your Studyspace profile signed in on this device, {authChoice.name}. You can sign out anytime from the profile menu.</p><button className="button primary auth-submit" onClick={() => onFinish(true)}>Yes, stay signed in</button><button className="button secondary auth-submit" onClick={() => onFinish(false)}>No, just for this session</button><p className="auth-local-note">Session-only sign-in ends when this browser session closes.</p></Card></div>;
-  return <div className="auth-overlay"><Card className="auth-card"><div className="auth-brand"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div><p className="eyebrow">YOUR PERSONAL STUDY SPACE</p><h1>{mode === "signup" ? "Make room to grow." : "Welcome back."}</h1><p className="auth-intro">{mode === "signup" ? "Create an account to keep your lectures, schedule, and progress synced to your Firebase account." : "Sign in to continue to your synced study space."}</p><form className="auth-form" onSubmit={submitCredentials}>
-    {mode === "signup" && <label>Your name<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Alex Student" /></label>}
-    <label>Email address<input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" /></label>
-    <label>Password<span className="password-field"><input required type={showPassword ? "text" : "password"} minLength="8" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "signup" ? "At least 8 characters" : "Enter your password"} /><button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((shown) => !shown)}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>
-    {mode === "signup" && <label>Confirm password<span className="password-field"><input required type={showConfirmPassword ? "text" : "password"} minLength="8" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Enter your password again" /><button type="button" className="password-toggle" aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"} aria-pressed={showConfirmPassword} onClick={() => setShowConfirmPassword((shown) => !shown)}>{showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>}
-    {error && <p className="auth-error" role="alert">{error}</p>}
-    <button className="button primary auth-submit" disabled={submitting}>{submitting ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}</button>
-  </form><div className="auth-divider"><span>or</span></div><button className="google-placeholder" type="button" disabled={submitting || !firebaseReady} onClick={continueWithGoogle}><span className="google-g">G</span> Continue with Google {!firebaseReady && <small>Complete Firebase configuration to enable</small>}</button>{googleError && <p className="auth-error" role="alert">{googleError}</p>}{!firebaseReady && <p className="auth-error" role="alert">Firebase setup is incomplete. Replace the placeholder values in the project-root `.env.local` with your Firebase Web App configuration, then restart Vite. Missing values: {missingConfig.join(", ")}</p>}<p className="auth-switch">{mode === "signup" ? "Already have an account?" : "New to Studyspace?"} <button type="button" onClick={switchMode}>{mode === "signup" ? "Log in" : "Sign up"}</button></p><p className="auth-local-note">Your account uses Firebase Authentication. Lectures, study activity, and profile preferences sync to your account.</p></Card></div>;
+  return <main className="auth-overlay auth-split">
+    <section className="auth-scene" aria-label="Study workspace">
+      <div className="auth-scene-top"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div>
+      <div className="auth-scene-copy"><span className="scene-kicker">STUDY ANYWHERE</span><h2>A more<br/>focused you.</h2><p>Organize your materials, practice smarter, and reach your goals.</p></div>
+      <span className="scene-credit">A calmer space for your next big idea.</span>
+    </section>
+    <section className="auth-form-side">
+      <Card className="auth-card auth-glass">
+        <div className="auth-brand auth-brand-mobile"><div className="brand-mark">s<span>.</span></div><span>studyspace</span></div>
+        <p className="eyebrow">YOUR PERSONAL STUDY SPACE</p>
+        <h1>{mode === "signup" ? "Make room to grow." : "Welcome Back"}</h1>
+        <p className="auth-intro">{mode === "signup" ? "Create your account and keep your study journey in sync." : "Log in to continue your study journey"}</p>
+        <form className="auth-form auth-modern-form" onSubmit={submitCredentials}>
+          {mode === "signup" && <label>Your name<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Alex Student" autoComplete="name" /></label>}
+          <label htmlFor="login-email">Email address<span className="auth-input-wrap"><Mail size={18} aria-hidden="true"/><input id="login-email" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" /></span>{error === "Please enter a valid email address." && <span className="auth-field-error" role="alert">{error}</span>}</label>
+          <label htmlFor="login-password">Password<span className="auth-input-wrap auth-password-wrap"><LockKeyhole size={18} aria-hidden="true"/><input id="login-password" required type={showPassword ? "text" : "password"} minLength="8" autoComplete={mode === "signup" ? "new-password" : "current-password"} value={password} onChange={(event) => { setPassword(event.target.value); if (event.target.value === confirmPassword) setConfirmPasswordError(""); }} placeholder={mode === "signup" ? "At least 8 characters" : "Enter your password"}/><button type="button" className="password-toggle" aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword} onClick={() => setShowPassword((shown) => !shown)}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></span>{mode === "signup" && error === "Your password is too weak. Please choose a stronger password." && <span className="auth-field-error" role="alert">{error}</span>}</label>
+          {mode === "signup" && <label>Confirm password<span className="password-field"><input required aria-invalid={Boolean(confirmPasswordError)} aria-describedby={confirmPasswordError ? "confirm-password-error" : undefined} type={showConfirmPassword ? "text" : "password"} minLength="8" autoComplete="new-password" value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); if (event.target.value === password) setConfirmPasswordError(""); }} placeholder="Enter your password again"/><button type="button" className="password-toggle" aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"} onClick={() => setShowConfirmPassword((shown) => !shown)}>{showConfirmPassword ? <EyeOff size={16}/> : <Eye size={16}/>}</button></span>{confirmPasswordError && <span className="auth-field-error" id="confirm-password-error" role="alert">{confirmPasswordError}</span>}</label>}
+          {mode === "login" && <div className="auth-options"><label className="remember-option"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)}/>Remember me</label><button type="button" className="auth-forgot" onClick={resetPassword} disabled={submitting}>Forgot password?</button></div>}
+          {error && !["Please enter a valid email address.", "Your password is too weak. Please choose a stronger password."].includes(error) && <div className="auth-error-stack"><p className="auth-error" role="alert">{error}</p>{existingAccountError && <button type="button" className="button secondary auth-existing-signin" onClick={switchMode}>Sign in instead</button>}</div>}{notice && <p className="auth-notice" role="status">{notice}</p>}
+          <button className="button primary auth-submit" disabled={submitting || !firebaseReady}>{submitting ? <><LoaderCircle className="auth-spinner" size={17}/> Please wait…</> : <>{mode === "signup" ? "Create account" : "Sign In"}<ArrowRight size={17}/></>}</button>
+        </form>
+        <p className="auth-switch auth-switch-under-submit">{mode === "signup" ? "Already have an account?" : "Don't have an account?"} <button type="button" onClick={switchMode}>{mode === "signup" ? "Sign in" : "Sign up"}</button></p>
+        <div className="auth-divider"><span>or continue with</span></div>
+        <button className="google-placeholder" type="button" disabled={submitting || !firebaseReady} onClick={continueWithGoogle}><span className="google-g">G</span> Continue with Google</button>
+        {googleError && <p className="auth-error" role="alert">{googleError}</p>}
+        {!firebaseReady && <p className="auth-error" role="alert">Firebase setup is incomplete. Add the Firebase Web App values to `.env.local`, then restart Vite. Missing: {missingConfig.join(", ")}</p>}
+        <p className="auth-local-note">Your account is secured by Firebase Authentication.</p>
+      </Card>
+    </section>
+  </main>;
 }
 
 function QuizSetup({ lecture, requestedCount, onSave, onBack }) {
