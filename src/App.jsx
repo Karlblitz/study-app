@@ -268,6 +268,7 @@ function App() {
       if (!user) {
         setProfile(null);
         setAuthChoice(null);
+        setTheme("light");
         setIsStarting(false);
         return;
       }
