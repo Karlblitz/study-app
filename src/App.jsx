@@ -171,7 +171,9 @@ function scheduleTimeFromParts(parts, format) {
   if (format === "12h") hour = (hour % 12) + (parts.period === "PM" ? 12 : 0);
   return `${String(hour).padStart(2, "0")}:${parts.minute}`;
 }
-const percent = (num, den) => den ? Math.round((num / den) * 100) : 0;
+const percent = (num, den) => Number.isFinite(num) && Number.isFinite(den) && den > 0
+  ? Math.min(100, Math.max(0, Math.round((num / den) * 100)))
+  : 0;
 const answerMatches = (question, answer) => Array.isArray(question.correctAnswer)
   ? Array.isArray(answer) && question.correctAnswer.length === answer.length && question.correctAnswer.every((item) => answer.includes(item))
   : question.correctAnswer === answer;
@@ -804,7 +806,7 @@ if (!result.summary?.trim()) {
         <WorkspaceSidebarNavigation page={page} lectures={lectures} navigate={navigate} />
       </SidebarContent>
       <SidebarFooter className="study-sidebar-footer">
-        <div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress"><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div>
+        <div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress" role="progressbar" aria-label="Study library completed" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completion}><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div>
         <button type="button" className="profile profile-button" onClick={() => setProfileEditorOpen(true)} title="Edit profile" aria-label={`Edit profile for ${profile?.name || "Student"}`}><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Edit profile</span></div><span className="profile-dots">↗</span></button>
       </SidebarFooter>
       <SidebarRail />
