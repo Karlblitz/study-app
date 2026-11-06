@@ -6,6 +6,8 @@ import unicodedata
 QUESTION_TYPES = {
     "Multiple choice",
     "True / False",
+    "Identification",
+    "Matching",
     "Multi-select",
     "Problem solving",
     "Mixed",
@@ -77,7 +79,10 @@ def build_quiz_prompt(request):
         "For True / False questions, provide exactly the choices True and False and use one of them as correctAnswer. "
         "For Multi-select questions, provide four distinct choices and a non-empty correctAnswer array containing "
         "only choices that are correct. Do not create duplicate or empty questions, invent unsupported facts, "
-        "or include markdown. Each question must include a short hint. "
+        "For Identification questions, set options to [] and provide a concise correctAnswer string. "
+        "For Matching questions, provide 3 or 4 pairs as objects with left and right strings, plus correctAnswer "
+        "as an object mapping every left string to its matching right string. "
+        "Do not include markdown. Each question must include a short hint. "
         "Return a JSON object with a questions array. Each question object must contain question, options, "
         "correctAnswer, type, hint, and explanation. "
         f"Requested type: {question_type}. "
@@ -119,9 +124,10 @@ def parse_quiz_response(response_text, request):
         options = item.get("options")
         question_type = item.get("type", request["type"])
         answer = item.get("correctAnswer")
-        if not isinstance(question, str) or not question.strip() or not isinstance(options, list):
+        if not isinstance(question, str) or not question.strip():
             raise ValueError(f"Question {index + 1} is missing its question text or answer choices.")
-
+        if not isinstance(options, list):
+            options = []
         options = [option.strip() for option in options if isinstance(option, str) and option.strip()]
         if len(options) != len({option.casefold() for option in options}):
             raise ValueError(f"Question {index + 1} contains duplicate answer choices.")
@@ -140,10 +146,27 @@ def parse_quiz_response(response_text, request):
         if question_type == "True / False" and set(options) != {"True", "False"}:
             raise ValueError(f"Question {index + 1} must have True and False answer choices.")
 
+        pairs = None
         if question_type == "Multi-select":
             if not isinstance(answer, list) or not answer or any(value not in options for value in answer):
                 raise ValueError(f"Question {index + 1} must identify one or more correct choices.")
             answer = list(dict.fromkeys(answer))
+        elif question_type == "Identification":
+            if options or not isinstance(answer, str) or not answer.strip():
+                raise ValueError(f"Question {index + 1} must have a short identification answer and no choices.")
+            answer = answer.strip()
+        elif question_type == "Matching":
+            pairs = item.get("pairs")
+            if not isinstance(pairs, list) or not 2 <= len(pairs) <= 4 or not isinstance(answer, dict):
+                raise ValueError(f"Question {index + 1} must include two to four matching pairs and an answer key.")
+            if any(not isinstance(pair, dict) or not isinstance(pair.get("left"), str) or not pair["left"].strip() or not isinstance(pair.get("right"), str) or not pair["right"].strip() for pair in pairs):
+                raise ValueError(f"Question {index + 1} contains an incomplete matching pair.")
+            pairs = [{"left": pair["left"].strip(), "right": pair["right"].strip()} for pair in pairs]
+            left = [pair["left"] for pair in pairs]
+            right = [pair["right"] for pair in pairs]
+            if len(set(left)) != len(pairs) or len(set(right)) != len(pairs) or set(answer) != set(left) or set(answer.values()) != set(right):
+                raise ValueError(f"Question {index + 1} has duplicate pairs or an invalid matching key.")
+            answer = {key: answer[key] for key in left}
         elif not isinstance(answer, str) or answer.strip() not in options:
             raise ValueError(f"Question {index + 1} must have a correct answer matching one of its choices.")
         else:
@@ -158,7 +181,7 @@ def parse_quiz_response(response_text, request):
         if len(explanation.strip()) > 500:
             raise ValueError(f"Question {index + 1} explanation is too long; keep it concise.")
 
-        questions.append({
+        parsed_question = {
             "id": f"generated-{index + 1}",
             "question": question.strip(),
             "options": options,
@@ -168,7 +191,10 @@ def parse_quiz_response(response_text, request):
             "difficulty": request["difficulty"],
             "hint": hint.strip(),
             "explanation": explanation.strip() if request["includeExplanations"] else "",
-        })
+        }
+        if pairs is not None:
+            parsed_question["pairs"] = pairs
+        questions.append(parsed_question)
     if request["type"] == "Mixed":
         type_counts = {
             question_type: sum(question["type"] == question_type for question in questions)

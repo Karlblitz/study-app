@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import questionSets from "./questions.js";
-import { extractLectureText } from "./contentExtraction.js";
 import {
   DEFAULT_QUIZ_SETTINGS,
   getUniqueValidQuestions,
@@ -33,8 +32,8 @@ import {
   updateUserRecord,
 } from "./firestore.js";
 import { onAuthStateChanged } from "firebase/auth";
-import { Eye, EyeOff, FileText, FileVideo, X, Mail, LockKeyhole, ArrowRight, LoaderCircle } from "lucide-react";
-import { CalendarDays, Moon, Sun } from "lucide-react";
+import { Eye, EyeOff, FileText, FileVideo, X, Mail, LockKeyhole, ArrowRight, LoaderCircle, Star, Pencil, Trash2 } from "lucide-react";
+import { CalendarDays, Moon, Sun, Home, BookOpen, CheckSquare, ClipboardList, Brain, ChartNoAxesCombined, Sparkles, Timer, Trophy, Settings2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
@@ -64,8 +63,22 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Plus } from "lucide-react";
-const today = () => new Date().toISOString().slice(0, 10);
-const navItems = [["home", "home", "Dashboard"], ["lectures", "▤", "My Lectures"], ["checklist", "✓", "Study Checklist"], ["schedule", "▦", "Study Schedule"], ["quizzes", "▧", "Quizzes"], ["progress", "◔", "Progress"]];
+import "./StudyTools.css";
+const AnalyticsPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.AnalyticsPage })));
+const AssistantPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.AssistantPage })));
+const AchievementsPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.AchievementsPage })));
+const FlashcardsPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.FlashcardsPage })));
+const FocusTimerPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.FocusTimerPage })));
+const PlannerPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.PlannerPage })));
+const SettingsPage = lazy(() => import("./StudyTools.jsx").then((module) => ({ default: module.SettingsPage })));
+async function extractLectureText(...args) {
+  const { extractLectureText: extract } = await import("./contentExtraction.js");
+  return extract(...args);
+}
+const todayForDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const today = () => todayForDate(new Date());
+const studyDateKey = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : todayForDate(new Date(value));
+const navItems = [["home", <Home size={17} />, "Dashboard"], ["checklist", <CheckSquare size={17} />, "My Learning"], ["lectures", <BookOpen size={17} />, "Learning Materials"], ["quizzes", <ClipboardList size={17} />, "Quiz Center"], ["flashcards", <Brain size={17} />, "Flashcards"], ["schedule", <CalendarDays size={17} />, "Study Planner"], ["progress", <ChartNoAxesCombined size={17} />, "Analytics"], ["assistant", <Sparkles size={17} />, "AI Study Assistant"], ["focus", <Timer size={17} />, "Focus Timer"], ["achievements", <Trophy size={17} />, "Achievements"], ["settings", <Settings2 size={17} />, "Settings"]];
 
 function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
   const { setOpenMobile } = useSidebar();
@@ -80,10 +93,10 @@ function WorkspaceSidebarNavigation({ page, lectures, navigate }) {
     <SidebarGroupContent>
       <SidebarMenu>
         {navItems.map(([id, icon, label]) => {
-          const isActive = page === id || (id === "lectures" && page === "viewer") || (id === "quizzes" && page.startsWith("quiz"));
+          const isActive = page === id || (id === "lectures" && page === "viewer") || (id === "schedule" && page === "sessionSchedule") || (id === "quizzes" && page.startsWith("quiz"));
           return <SidebarMenuItem key={id}>
           <SidebarMenuButton className={`nav-link${isActive ? " active" : ""}`} isActive={isActive} tooltip={label} onClick={() => handleNavigate(id)}>
-            <span className="nav-icon">{icon === "home" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg> : id === "lectures" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 0 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg> : id === "schedule" ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-9-6h.008v.008H12v-.008ZM12 15h.008v.008H12V15Zm0 2.25h.008v.008H12v-.008ZM9.75 15h.008v.008H9.75V15Zm0 2.25h.008v.008H9.75v-.008ZM7.5 15h.008v.008H7.5V15Zm0 2.25h.008v.008H7.5v-.008Zm6.75-4.5h.008v.008h-.008v-.008Zm0 2.25h.008v.008h-.008V15Zm0 2.25h.008v.008h-.008v-.008Zm2.25-4.5h.008v.008H16.5v-.008Zm0 2.25h.008v.008H16.5V15Z" /></svg> : icon}</span>
+            <span className="nav-icon">{icon}</span>
             <span>{label}</span>
             {id === "lectures" && <SidebarMenuBadge className="nav-count">{lectures.length}</SidebarMenuBadge>}
           </SidebarMenuButton>
@@ -99,8 +112,12 @@ function readLocalResources(uid) {
   return saved ? JSON.parse(saved) : {};
 }
 function saveLocalResource(uid, lecture) {
-  if (!lecture.fileData) return;
   const resources = readLocalResources(uid);
+  if (!lecture.fileData) {
+    delete resources[lecture.id];
+    localStorage.setItem(localResourceKey(uid), JSON.stringify(resources));
+    return;
+  }
   resources[lecture.id] = { fileName: lecture.fileName, fileType: lecture.fileType, fileData: lecture.fileData };
   localStorage.setItem(localResourceKey(uid), JSON.stringify(resources));
 }
@@ -113,7 +130,9 @@ function minutesFromClock(time) {
 function getScheduleReminders(sessions) {
   const date = today();
   const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const tomorrowDate = new Date();
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrow = todayForDate(tomorrowDate);
   return sessions
     .filter((session) => !session.completed && session.date >= date)
     .filter((session) => session.date !== date || minutesFromClock(session.end) >= nowMins)
@@ -139,6 +158,28 @@ function getScheduleReminders(sessions) {
       }
       return { ...session, reminderLabel, tone };
     });
+}
+function getPlannerTaskReminders(tasks) {
+  const todayDate = today();
+  const weekEndDate = new Date();
+  weekEndDate.setDate(weekEndDate.getDate() + 7);
+  const windowEnd = todayForDate(weekEndDate);
+  const pending = tasks.filter((task) => !task.completed && typeof task.dueDate === "string" && task.dueDate <= windowEnd);
+  const byPriority = (a, b) => ({ High: 0, Medium: 1, Low: 2 }[a.priority] ?? 1) - ({ High: 0, Medium: 1, Low: 2 }[b.priority] ?? 1);
+  const overdue = pending.filter((task) => task.dueDate < todayDate)
+    .sort((a, b) => b.dueDate.localeCompare(a.dueDate) || byPriority(a, b))
+    .slice(0, 4);
+  const upcoming = pending.filter((task) => task.dueDate >= todayDate)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || byPriority(a, b))
+    .slice(0, 4);
+  return [...overdue, ...upcoming].map((task) => ({
+    ...task,
+    id: `task-${task.id}`,
+    type: "task",
+    title: task.title,
+    reminderLabel: task.dueDate < todayDate ? "Overdue" : task.dueDate === todayDate ? "Due today" : task.dueDate === todayForDate(new Date(Date.now() + 86400000)) ? "Due tomorrow" : fmtDate(task.dueDate, { weekday: "short", month: "short", day: "numeric" }),
+    tone: task.dueDate < todayDate ? "overdue" : task.dueDate === todayDate ? "soon" : "upcoming",
+  }));
 }
 const formatScheduleTime = (time, format) => {
   if (format === "24h") return time;
@@ -174,10 +215,14 @@ function scheduleTimeFromParts(parts, format) {
 const percent = (num, den) => Number.isFinite(num) && Number.isFinite(den) && den > 0
   ? Math.min(100, Math.max(0, Math.round((num / den) * 100)))
   : 0;
-const answerMatches = (question, answer) => Array.isArray(question.correctAnswer)
-  ? Array.isArray(answer) && question.correctAnswer.length === answer.length && question.correctAnswer.every((item) => answer.includes(item))
-  : question.correctAnswer === answer;
-const answerText = (answer) => Array.isArray(answer) ? answer.join(", ") : answer || "No answer";
+const answerMatches = (question, answer) => question.type === "Identification"
+  ? typeof answer === "string" && typeof question.correctAnswer === "string" && answer.trim().localeCompare(question.correctAnswer.trim(), undefined, { sensitivity: "accent" }) === 0
+  : question.correctAnswer && typeof question.correctAnswer === "object" && !Array.isArray(question.correctAnswer)
+    ? answer && typeof answer === "object" && !Array.isArray(answer) && Object.keys(answer).length === Object.keys(question.correctAnswer).length && Object.entries(question.correctAnswer).every(([key, value]) => answer[key] === value)
+    : Array.isArray(question.correctAnswer)
+      ? Array.isArray(answer) && question.correctAnswer.length === answer.length && question.correctAnswer.every((item) => answer.includes(item))
+      : question.correctAnswer === answer;
+const answerText = (answer) => Array.isArray(answer) ? answer.join(", ") : answer && typeof answer === "object" ? Object.entries(answer).map(([left, right]) => `${left} → ${right}`).join("; ") : answer || "No answer";
 function getLectureQuestions(lecture) {
   if ((lecture.quizSource === "custom" || lecture.quizSource === "generated") && lecture.questions?.length) return lecture.questions;
   const title = lecture.title?.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -218,6 +263,22 @@ function adaptQuizQuestion(question, mode, lectureTitle) {
   }
   return { ...question, type: "Multiple choice" };
 }
+function shuffleArray(items) {
+  const shuffled = [...items];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const target = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[target]] = [shuffled[target], shuffled[index]];
+  }
+  return shuffled;
+}
+function randomizeQuizQuestions(questions) {
+  return shuffleArray(questions).map((question) => question.type === "Matching"
+    ? { ...question, pairs: shuffleArray(question.pairs || []) }
+    : { ...question, options: shuffleArray(question.options || []) });
+}
+function AppSectionLoading() {
+  return <div className="panel study-page-loading" role="status"><LoaderCircle className="auth-spinner" size={19} /> Loading this study space...</div>;
+}
 
 function App() {
   const [isStarting, setIsStarting] = useState(true);
@@ -237,6 +298,10 @@ function App() {
   const [sessions, setSessions] = useState([]);
   const [attempts, setAttempts] = useState([]);
   const [savedQuizzes, setSavedQuizzes] = useState([]);
+  const [flashcards, setFlashcards] = useState([]);
+  const [plannerTasks, setPlannerTasks] = useState([]);
+  const [focusSessions, setFocusSessions] = useState([]);
+  const [achievements, setAchievements] = useState([]);
   const [search, setSearch] = useState("");
   const [selectedLecture, setSelectedLecture] = useState(null);
   const [quizState, setQuizState] = useState(null);
@@ -265,6 +330,10 @@ function App() {
       setSessions([]);
       setAttempts([]);
       setSavedQuizzes([]);
+      setFlashcards([]);
+      setPlannerTasks([]);
+      setFocusSessions([]);
+      setAchievements([]);
       setSelectedLecture(null);
 
       if (!user) {
@@ -277,7 +346,7 @@ function App() {
 
       setProfile({ uid: user.uid, name: user.displayName || user.email || "Student", email: user.email || "", theme: "light", timeFormat: "12h" });
       setIsStarting(true);
-      const pending = new Set(["lectures", "sessions", "quiz attempts", "saved quizzes", "profile"]);
+      const pending = new Set(["lectures", "sessions", "quiz attempts", "saved quizzes", "flashcards", "planner tasks", "focus sessions", "achievements", "profile"]);
       let profileInitialized = false;
       const markLoaded = (collectionName) => {
         pending.delete(collectionName);
@@ -315,6 +384,26 @@ function App() {
         setSavedQuizzes(records);
         markLoaded("saved quizzes");
       }, (error) => loadFailed("saved quizzes", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "flashcards", (records) => {
+        setFlashcards(records);
+        markLoaded("flashcards");
+      }, (error) => loadFailed("flashcards", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "plannerTasks", (records) => {
+        setPlannerTasks(records);
+        markLoaded("planner tasks");
+      }, (error) => loadFailed("planner tasks", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "focusSessions", (records) => {
+        setFocusSessions(records);
+        markLoaded("focus sessions");
+      }, (error) => loadFailed("focus sessions", error)));
+
+      dataUnsubscribers.push(subscribeToUserRecords(user.uid, "achievements", (records) => {
+        setAchievements(records);
+        markLoaded("achievements");
+      }, (error) => loadFailed("achievements", error)));
 
       dataUnsubscribers.push(subscribeToUserProfile(user.uid, (savedProfile) => {
         if (savedProfile) {
@@ -374,14 +463,34 @@ function App() {
   }, [calendarOpen, notificationsOpen]);
   const studied = lectures.filter((lecture) => lecture.studied).length;
   const completion = percent(studied, lectures.length);
-  const matchingLectures = useMemo(() => lectures.filter((lecture) => `${lecture.title} ${lecture.subject} ${lecture.description}`.toLowerCase().includes(search.toLowerCase())), [lectures, search]);
+  const activityDateSet = new Set([...attempts.map((item) => item.date), ...focusSessions.map((item) => item.date || item.finishedAt), ...sessions.filter((item) => item.completed).map((item) => item.completedAt || item.date), ...plannerTasks.filter((item) => item.completed).map((item) => item.completedAt || item.dueDate)].filter(Boolean).map(studyDateKey));
+  const streakCursor = new Date();
+  if (!activityDateSet.has(today())) streakCursor.setDate(streakCursor.getDate() - 1);
+  let currentStreak = 0;
+  while (activityDateSet.has(todayForDate(streakCursor))) { currentStreak += 1; streakCursor.setDate(streakCursor.getDate() - 1); }
+  const achievementMetrics = {
+    materials: lectures.length,
+    quizzes: attempts.length,
+    focusMinutes: focusSessions.reduce((sum, session) => sum + (session.minutes || 0), 0),
+    cardReviews: flashcards.reduce((sum, card) => sum + (card.reviewCount || 0), 0),
+    activeDays: activityDateSet.size,
+    streakDays: currentStreak,
+    completions: sessions.filter((item) => item.completed).length + plannerTasks.filter((item) => item.completed).length,
+  };
+  const matchingLectures = useMemo(() => lectures.filter((lecture) => `${lecture.title} ${lecture.subject} ${lecture.module || ""} ${lecture.chapter || ""} ${lecture.topic || ""} ${lecture.description} ${lecture.fileName || ""} ${lecture.lectureContent || ""}`.toLowerCase().includes(search.toLowerCase())), [lectures, search]);
   const scheduleReminders = useMemo(() => getScheduleReminders(sessions), [sessions]);
+  const notificationItems = useMemo(() => [
+    ...scheduleReminders.map((session) => ({ ...session, id: `session-${session.id}`, type: "session", title: session.topic })),
+    ...getPlannerTaskReminders(plannerTasks),
+  ].sort((a, b) => a.date.localeCompare(b.date) || (a.type === "session" ? a.start : "").localeCompare(b.type === "session" ? b.start : "")).slice(0, 8), [scheduleReminders, plannerTasks]);
   const pageTitle = page === "viewer"
-    ? selectedLecture?.title || "My Lectures"
+    ? selectedLecture?.title || "Learning Materials"
+    : page === "sessionSchedule"
+      ? "Study sessions"
     : page === "quizRun" || page === "quizSetup" || page === "quizOptions" || page === "quizReview"
       ? selectedLecture?.title || "Quiz"
-      : navItems.find(([id]) => id === page)?.[2] || "My Lectures";
-  const breadcrumbParent = page === "viewer" ? "My Lectures" : page.startsWith("quiz") ? "Quizzes" : "Workspace";
+      : navItems.find(([id]) => id === page)?.[2] || "Learning Materials";
+  const breadcrumbParent = page === "viewer" ? "Learning Materials" : page === "sessionSchedule" ? "Study Planner" : page.startsWith("quiz") ? "Quiz Center" : "Workspace";
 
   function notify(message) { setToast(message); window.setTimeout(() => setToast(""), 2400); }
   function reportCloudError(action, error) {
@@ -424,14 +533,46 @@ function App() {
     }
   }
   async function saveLecture(form) {
-    const lecture = { ...form, id: crypto.randomUUID(), studied: false, dateAdded: today(), questions: [], quizSource: "none" };
+    const existing = form.id ? lectures.find((item) => item.id === form.id) : null;
+    const lecture = existing
+      ? { ...existing, ...form, fileData: form.fileName ? (form.fileData || (form.fileName === existing.fileName ? existing.fileData : "")) : "", dateAdded: existing.dateAdded, studied: existing.studied }
+      : { ...form, id: crypto.randomUUID(), studied: false, favorite: false, dateAdded: today(), questions: [], quizSource: "none" };
     try {
-      await persistLecture(lecture, true);
+      await persistLecture(lecture, !existing);
       setLectures((items) => [lecture, ...items.filter((item) => item.id !== lecture.id)]);
       setPage("lectures");
-      notify("Lecture added to your library");
+      notify(existing ? "Material updated" : "Material added to your library");
+      return true;
     } catch (error) {
-      reportCloudError("Could not save lecture", error);
+      reportCloudError(existing ? "Could not update material" : "Could not save material", error);
+      return false;
+    }
+  }
+  async function toggleFavorite(id) {
+    const lecture = lectures.find((item) => item.id === id);
+    if (!lecture) return;
+    const updated = { ...lecture, favorite: !lecture.favorite };
+    try {
+      await persistLecture(updated);
+      setLectures((items) => items.map((item) => item.id === id ? updated : item));
+    } catch (error) {
+      reportCloudError("Could not update bookmark", error);
+    }
+  }
+  async function deleteLecture(id) {
+    const lecture = lectures.find((item) => item.id === id);
+    if (!lecture || !window.confirm(`Delete “${lecture.title}” from your learning materials? Quiz attempts will remain in your history.`)) return;
+    try {
+      await deleteUserRecord(currentUid(), "lectures", id);
+      try {
+        const resources = readLocalResources(currentUid());
+        delete resources[id];
+        localStorage.setItem(localResourceKey(currentUid()), JSON.stringify(resources));
+      } catch { /* A local preview cache may be unavailable. */ }
+      setLectures((items) => items.filter((item) => item.id !== id));
+      notify("Material deleted");
+    } catch (error) {
+      reportCloudError("Could not delete material", error);
     }
   }
   async function saveSession(form) {
@@ -466,6 +607,133 @@ function App() {
       return true;
     } catch (error) {
       reportCloudError("Could not delete study session", error);
+      return false;
+    }
+  }
+  async function createPlannerTask(record) {
+    const task = { ...record, id: crypto.randomUUID() };
+    try {
+      await createUserRecord(currentUid(), "plannerTasks", task);
+      setPlannerTasks((items) => [task, ...items.filter((item) => item.id !== task.id)]);
+      return true;
+    } catch (error) {
+      reportCloudError("Could not save planner task", error);
+      return false;
+    }
+  }
+  async function updatePlannerTask(id, updates) {
+    const task = plannerTasks.find((item) => item.id === id);
+    if (!task) return false;
+    const updated = { ...task, ...updates };
+    try {
+      await updateUserRecord(currentUid(), "plannerTasks", id, updated);
+      setPlannerTasks((items) => items.map((item) => item.id === id ? updated : item));
+      return true;
+    } catch (error) {
+      reportCloudError("Could not update planner task", error);
+      return false;
+    }
+  }
+  async function deletePlannerTask(id) {
+    try {
+      await deleteUserRecord(currentUid(), "plannerTasks", id);
+      setPlannerTasks((items) => items.filter((item) => item.id !== id));
+      return true;
+    } catch (error) {
+      reportCloudError("Could not delete planner task", error);
+      return false;
+    }
+  }
+  async function createFlashcard(record) {
+    const card = { ...record, id: crypto.randomUUID() };
+    try {
+      await createUserRecord(currentUid(), "flashcards", card);
+      setFlashcards((items) => [card, ...items.filter((item) => item.id !== card.id)]);
+      notify("Flashcard saved");
+      return true;
+    } catch (error) {
+      reportCloudError("Could not save flashcard", error);
+      return false;
+    }
+  }
+  async function updateFlashcard(id, updates) {
+    const card = flashcards.find((item) => item.id === id);
+    if (!card) return false;
+    const updated = { ...card, ...updates };
+    try {
+      await updateUserRecord(currentUid(), "flashcards", id, updated);
+      setFlashcards((items) => items.map((item) => item.id === id ? updated : item));
+      return true;
+    } catch (error) {
+      reportCloudError("Could not update flashcard review", error);
+      return false;
+    }
+  }
+  async function deleteFlashcard(id) {
+    try {
+      await deleteUserRecord(currentUid(), "flashcards", id);
+      setFlashcards((items) => items.filter((item) => item.id !== id));
+      return true;
+    } catch (error) {
+      reportCloudError("Could not delete flashcard", error);
+      return false;
+    }
+  }
+  async function saveFocusSession(record) {
+    const session = { ...record, id: crypto.randomUUID() };
+    try {
+      await createUserRecord(currentUid(), "focusSessions", session);
+      setFocusSessions((items) => [session, ...items.filter((item) => item.id !== session.id)]);
+      notify("Focus session complete");
+      return true;
+    } catch (error) {
+      reportCloudError("Could not save focus session", error);
+      return false;
+    }
+  }
+  async function awardAchievement(definition) {
+    if (achievements.some((item) => (item.achievementId || item.id) === definition.id)) return;
+    const record = { id: definition.id, achievementId: definition.id, name: definition.name, xp: definition.xp, earnedAt: new Date().toISOString() };
+    setAchievements((items) => items.some((item) => (item.achievementId || item.id) === record.id) ? items : [record, ...items]);
+    try {
+      await createUserRecord(currentUid(), "achievements", record);
+      notify(`Achievement unlocked: ${definition.name} (+${definition.xp} XP)`);
+    } catch (error) {
+      setAchievements((items) => items.filter((item) => (item.achievementId || item.id) !== record.id));
+      reportCloudError("Could not save achievement", error);
+    }
+  }
+  async function askAssistant({ action, question, questionType, lecture }) {
+    let notes = lecture.lectureContent?.trim() || lecture.summary?.trim() || lecture.description?.trim() || "";
+    if (notes.length < 60 && lecture.fileData && !lecture.fileType?.startsWith("video/")) {
+      const response = await fetch(lecture.fileData);
+      if (!response.ok) throw new Error("Could not read the local file preview. Add the lecture notes again or paste the key text.");
+      notes = await extractLectureText(await response.blob(), lecture.fileName, lecture.fileType);
+    }
+    if (notes.trim().length < 40) throw new Error("This material does not have enough readable text yet. Add notes, a transcript, or a supported document first.");
+    const response = await fetch("/api/study-assistant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, question, questionType, title: lecture.title, subject: lecture.subject, notes: notes.slice(0, 120000) }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "The assistant could not create a response. Check that the Gemini service is running.");
+    return result;
+  }
+  async function saveAssistantCards(cards, lecture) {
+    for (const card of cards) {
+      const saved = await createFlashcard({ front: card.front, back: card.back, subject: lecture.subject, deck: lecture.title, lectureId: lecture.id, intervalDays: 0, repetitions: 0, ease: 2.5, dueAt: new Date().toISOString(), createdAt: new Date().toISOString() });
+      if (!saved) return false;
+    }
+    notify(`${cards.length} flashcards saved to ${lecture.title}`);
+    return true;
+  }
+  async function saveAssistantQuestions(questions, lecture) {
+    const combined = getUniqueValidQuestions([...(lecture.questions || []), ...questions]).slice(0, 20);
+    const updated = { ...lecture, questions: combined, quizSource: "custom" };
+    try {
+      await persistLecture(updated);
+      setLectures((items) => items.map((item) => item.id === updated.id ? updated : item));
+      notify("Generated questions saved to this lecture's question bank");
+      return true;
+    } catch (error) {
+      reportCloudError("Could not save generated questions", error);
       return false;
     }
   }
@@ -521,7 +789,8 @@ function App() {
       }
       if (!response.ok) throw new Error(result.error || "The quiz could not be generated. Try again.");
 
-      const questions = validateGeneratedQuiz(result.questions, config);
+      const validQuestions = validateGeneratedQuiz(result.questions, config);
+      const questions = randomizeQuizQuestions(validQuestions);
       const savedQuiz = {
         id: crypto.randomUUID(),
         lectureId: lecture.id,
@@ -585,6 +854,7 @@ function App() {
           difficulty: settings.difficulty,
         };
       });
+      const randomizedPrepared = randomizeQuizQuestions(prepared);
       const config = { ...settings, count: prepared.length, includeExplanations: true };
       const savedQuiz = {
         id: crypto.randomUUID(),
@@ -592,12 +862,12 @@ function App() {
         title: updated.title,
         subject: updated.subject,
         config,
-        questions: prepared,
+        questions: randomizedPrepared,
         createdAt: new Date().toISOString(),
       };
       await createUserRecord(currentUid(), "quizzes", savedQuiz);
       setSavedQuizzes((items) => [savedQuiz, ...items.filter((item) => item.id !== savedQuiz.id)]);
-      setQuizState({ questions: prepared, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config, startedAt: Date.now(), savedQuizId: savedQuiz.id });
+      setQuizState({ questions: randomizedPrepared, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config, startedAt: Date.now(), savedQuizId: savedQuiz.id });
       setQuizSetupCount(null);
       setQuizSetupSettings(null);
       setPage("quizRun");
@@ -667,7 +937,9 @@ function App() {
   }
   async function finishQuiz(answers) {
     const score = scoreQuizQuestions(quizState.questions, answers);
-    const attempt = { id: crypto.randomUUID(), quizId: quizState.savedQuizId || "", lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, topic: selectedLecture.title, difficulty: quizState.config?.difficulty || "Medium", type: quizState.config?.type || "Multiple choice", score, total: quizState.questions.length, seconds: Math.round((Date.now() - quizState.startedAt) / 1000), date: new Date().toISOString() };
+    const passingScore = quizState.config?.passingScore || 70;
+    const scorePct = percent(score, quizState.questions.length);
+    const attempt = { id: crypto.randomUUID(), quizId: quizState.savedQuizId || "", lectureId: selectedLecture.id, title: selectedLecture.title, subject: selectedLecture.subject, topic: selectedLecture.title, difficulty: quizState.config?.difficulty || "Medium", type: quizState.config?.type || "Multiple choice", mode: quizState.config?.mode || "practice", passingScore, passed: scorePct >= passingScore, score, total: quizState.questions.length, seconds: Math.round((Date.now() - quizState.startedAt) / 1000), date: new Date().toISOString() };
     try {
       await createUserRecord(currentUid(), "quizAttempts", attempt);
       setAttempts((items) => [attempt, ...items.filter((item) => item.id !== attempt.id)]);
@@ -677,10 +949,22 @@ function App() {
     }
   }
   function retryQuiz() { startQuiz(selectedLecture, quizState.config || DEFAULT_QUIZ_SETTINGS); }
+  function retryIncorrectQuestions() {
+    const questions = quizState.questions.filter((question, index) => !answerMatches(question, quizState.answers[index]));
+    if (!questions.length) return;
+    setQuizState((state) => ({ ...state, questions, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config: { ...state.config, count: questions.length, mode: "practice" }, startedAt: Date.now(), savedQuizId: state.savedQuizId || "" }));
+    setPage("quizRun");
+  }
   function startConfiguredQuiz(settings) { startQuiz(selectedLecture, settings); }
   function goToQuizReview() { setPage("quizReview"); }
-  function openLecture(lecture) { setSelectedLecture(lecture); setPage("viewer"); }
-  function addToSchedule(lecture) { setPage("schedule"); setSelectedLecture(lecture); }
+  function openLecture(lecture) {
+    const viewed = { ...lecture, lastViewedAt: new Date().toISOString() };
+    setSelectedLecture(viewed);
+    setLectures((items) => items.map((item) => item.id === lecture.id ? viewed : item));
+    setPage("viewer");
+    updateUserRecord(currentUid(), "lectures", lecture.id, { lastViewedAt: viewed.lastViewedAt }).catch((error) => reportCloudError("Could not save recently viewed status", error));
+  }
+  function addToSchedule(lecture) { setPage("sessionSchedule"); setSelectedLecture(lecture); }
   function openSavedQuiz(savedQuiz) {
     const lecture = lectures.find((item) => item.id === savedQuiz.lectureId);
     if (!lecture) {
@@ -701,7 +985,7 @@ function App() {
     };
     setQuizGenerationError("");
     setSelectedLecture(lecture);
-    setQuizState({ questions, index: 0, answers: {}, submitted: {}, hints: {}, done: false, config, startedAt: Date.now(), savedQuizId: savedQuiz.id });
+    setQuizState({ questions: randomizeQuizQuestions(questions), index: 0, answers: {}, submitted: {}, hints: {}, done: false, config, startedAt: Date.now(), savedQuizId: savedQuiz.id });
     setPage("quizRun");
   }
   function openQuizOptions(lecture) {
@@ -721,80 +1005,28 @@ function App() {
       notes ||= lecture.description?.trim() || "";
       const videoData = lecture.fileType?.startsWith("video/") && lecture.fileData ? lecture.fileData : "";
       const videoUrl = lecture.fileType === "video/youtube" ? lecture.fileName : "";
-      if (lecture.fileType?.startsWith("video/") && !videoData && !videoUrl && !lecture.lectureContent?.trim()) {
-        notify("Attach a supported video that is 3 MB or smaller, or paste its transcript into the lecture notes.");
-        return;
-      }
       if (!notes && !videoData && !videoUrl) {
-        notify("Add lecture notes or a video transcript before creating a summary.");
-        return;
+        throw new Error("Add lecture notes, a transcript, or a supported video before creating a summary.");
       }
-      console.log("Lecture:", lecture);
-      console.log("Notes value:", notes);
-      console.log("Notes type:", typeof notes);
-      console.log("Notes length:", notes?.length);
-      // Get the lecture text, or extract it from the stored PDF
-        let lectureNotes = lecture.lectureContent?.trim() || "";
-
-        if (!lectureNotes && lecture.file && lecture.fileType === "application/pdf") {
-          const pdfResponse = await fetch(lecture.file);
-          const pdfBlob = await pdfResponse.blob();
-
-          const pdfFile = new File(
-            [pdfBlob],
-            lecture.fileName || "lecture.pdf",
-            { type: "application/pdf" }
-          );
-
-          lectureNotes = await extractLectureText(
-            pdfFile,
-            lecture.fileName || "lecture.pdf",
-            "application/pdf"
-          );
-        }
-
-        console.log("Extracted PDF text:", lectureNotes);
-        console.log("Extracted text length:", lectureNotes.length);
-
-        if (!lectureNotes.trim()) {
-          throw new Error("No text could be extracted from this PDF.");
-        }
-
-        const response = await fetch("/api/summarize", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            title: lecture.title,
-            subject: lecture.subject,
-            notes: lectureNotes,
-          }),
+      const response = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: lecture.title, subject: lecture.subject, notes: notes.slice(0, 120000), videoData, videoType: lecture.fileType || "", videoName: lecture.fileName || "lecture-video", videoUrl }),
       });
       const result = await response.json().catch(() => ({}));
-
-          console.log("Summary response:", response.status, result);
-
-            if (!response.ok) {
-              throw new Error(
-         result.error || `Server error: ${response.status}`
-      );
-  }
-
-if (!result.summary?.trim()) {
-  throw new Error("The summarizer returned an empty summary. Try again.");
-}
-      const updated = { ...lecture, lectureContent: lecture.lectureContent || (videoData || videoUrl ? result.summary.trim() : notes), summary: result.summary.trim() };
+      if (!response.ok) throw new Error(result.error || "The summary could not be created. Try again.");
+      if (!result.summary?.trim()) throw new Error("The summarizer returned an empty summary. Try again.");
+      const updated = { ...lecture, lectureContent: lecture.lectureContent || notes, summary: result.summary.trim() };
       await persistLecture(updated);
       setLectures((items) => items.map((item) => item.id === lecture.id ? updated : item));
       setSelectedLecture((current) => current?.id === lecture.id ? updated : current);
+      notify("Lecture summary saved");
     } catch (error) {
-      notify(error instanceof TypeError ? "Summary service unavailable. Start the Python server and set GEMINI_API_KEY." : error.message);
+      notify(error instanceof TypeError ? "Summary service unavailable. Start the Python service and set GEMINI_API_KEY." : error.message);
     } finally {
       setSummarizingLectureId(null);
     }
   }
-
   if (isStarting) return <AppStartupSkeleton theme={theme} />;
 
   return <SidebarProvider className={`app-shell ${theme === "dark" ? "dark-mode dark" : ""}`} style={{ "--sidebar-width": "240px", "--sidebar-width-icon": `${collapsedSidebarWidth}px` }}>
@@ -819,21 +1051,21 @@ if (!result.summary?.trim()) {
           <BreadcrumbList>
             <BreadcrumbItem><BreadcrumbLink href="#workspace" onClick={(event) => { event.preventDefault(); navigate("home"); }}>Workspace</BreadcrumbLink></BreadcrumbItem>
             <BreadcrumbSeparator />
-            {breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "My Lectures" ? "lectures" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}
+            {breadcrumbParent !== "Workspace" && <><BreadcrumbItem><BreadcrumbLink href="#parent" onClick={(event) => { event.preventDefault(); navigate(breadcrumbParent === "Learning Materials" ? "lectures" : breadcrumbParent === "Study Planner" ? "schedule" : "quizzes"); }}>{breadcrumbParent}</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /></>}
             <BreadcrumbItem><BreadcrumbPage>{pageTitle}</BreadcrumbPage></BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
         <div className="top-actions">
           <label className="theme-control"><span className="theme-icon">{theme === "dark" ? <Moon size={14} /> : <Sun size={14} />}</span><span className="theme-label">{theme === "dark" ? "Dark" : "Light"}</span><Switch checked={theme === "dark"} onCheckedChange={(checked) => updatePreference({ theme: checked ? "dark" : "light" })} aria-label="Toggle dark mode" /></label>
           <div className="calendar-trigger-wrap" ref={notificationsPopover}>
-            <button type="button" className={`notification-trigger${notificationsOpen ? " is-open" : ""}`} aria-label={scheduleReminders.length ? `Study schedule notifications, ${scheduleReminders.length} upcoming` : "Study schedule notifications"} aria-haspopup="dialog" aria-expanded={notificationsOpen} onClick={() => { setCalendarOpen(false); setNotificationsOpen((open) => !open); }}>
+            <button type="button" className={`notification-trigger${notificationsOpen ? " is-open" : ""}`} aria-label={notificationItems.length ? `Study reminders, ${notificationItems.length} items` : "Study reminders"} aria-haspopup="dialog" aria-expanded={notificationsOpen} onClick={() => { setCalendarOpen(false); setNotificationsOpen((open) => !open); }}>
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" /></svg>
-              {scheduleReminders.length > 0 && <span className="notification-badge">{scheduleReminders.length > 9 ? "9+" : scheduleReminders.length}</span>}
+              {notificationItems.length > 0 && <span className="notification-badge">{notificationItems.length > 9 ? "9+" : notificationItems.length}</span>}
             </button>
-            {notificationsOpen && <div className="notification-popover" role="dialog" aria-label="Study schedule notifications">
-              <div className="notification-popover-head"><strong>Study schedule</strong><span>{scheduleReminders.length ? `${scheduleReminders.length} upcoming` : "No upcoming sessions"}</span></div>
-              {scheduleReminders.length ? <ul className="notification-list">{scheduleReminders.map((session) => <li key={session.id}><button type="button" className={`notification-item tone-${session.tone}`} onClick={() => { setNotificationsOpen(false); go("schedule"); }}><span className="notification-item-time">{fmtTime(session.start)}</span><span className="notification-item-body"><strong>{session.topic}</strong><small>{session.subject} · {session.reminderLabel}</small></span></button></li>)}</ul> : <p className="notification-empty">Nothing scheduled right now. Plan a session so reminders can show up here.</p>}
-              <button type="button" className="text-button notification-footer" onClick={() => { setNotificationsOpen(false); go("schedule"); }}>Open study schedule →</button>
+            {notificationsOpen && <div className="notification-popover" role="dialog" aria-label="Study reminders">
+              <div className="notification-popover-head"><strong>Study reminders</strong><span>{notificationItems.length ? `${notificationItems.length} items` : "Nothing due soon"}</span></div>
+              {notificationItems.length ? <ul className="notification-list">{notificationItems.map((item) => <li key={item.id}><button type="button" className={`notification-item tone-${item.tone}`} onClick={() => { setNotificationsOpen(false); go("schedule"); }}><span className="notification-item-time">{item.type === "session" ? fmtTime(item.start) : item.priority || "Task"}</span><span className="notification-item-body"><strong>{item.title}</strong><small>{item.subject || "General"} · {item.reminderLabel}</small></span></button></li>)}</ul> : <p className="notification-empty">No study sessions or tasks are due in the next week. Add a plan so reminders can show up here.</p>}
+              <button type="button" className="text-button notification-footer" onClick={() => { setNotificationsOpen(false); go("schedule"); }}>Open study planner →</button>
             </div>}
           </div>
           <div className="calendar-trigger-wrap" ref={calendarPopover}>
@@ -845,17 +1077,25 @@ if (!result.summary?.trim()) {
       <div className="content">
         {cloudError && <p className="auth-error" role="alert">{cloudError}</p>}
         {quizGenerationError && !["quizzes", "quizOptions"].includes(page) && <p className="quiz-setup-message" role="alert">{quizGenerationError}</p>}
-        {page === "home" && <Dashboard lectures={lectures} sessions={sessions} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
-        {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onQuiz={startQuiz} onCustomizeSettings={openQuizOptions} generatingLectureId={generatingLectureId} onAdd={saveLecture} />}
+        <Suspense fallback={<AppSectionLoading />}>
+        {page === "home" && <Dashboard lectures={lectures} sessions={sessions} attempts={attempts} profile={profile} completion={completion} studied={studied} onNavigate={go} onOpen={openLecture} onAdd={() => go("lectures")} />}
+        {page === "lectures" && <LecturesPage lectures={matchingLectures} search={search} setSearch={setSearch} onOpen={openLecture} onToggle={toggleStudied} onFavorite={toggleFavorite} onDelete={deleteLecture} onQuiz={startQuiz} onCustomizeSettings={openQuizOptions} generatingLectureId={generatingLectureId} onAdd={saveLecture} />}
         {page === "checklist" && <Checklist lectures={lectures} studied={studied} completion={completion} onToggle={toggleStudied} />}
-        {page === "schedule" && <SchedulePage sessions={sessions} lectures={lectures} onSave={saveSession} onUpdate={updateSession} onDelete={deleteSession} onPreferenceChange={updatePreference} timeFormat={profile?.timeFormat} selectedLecture={selectedLecture} clearSelected={() => setSelectedLecture(null)} />}
+        {page === "schedule" && <PlannerPage tasks={plannerTasks} sessions={sessions} lectures={lectures} onCreate={createPlannerTask} onUpdate={updatePlannerTask} onDelete={deletePlannerTask} onSessionComplete={(id) => updateSession(id, { completed: true, completedAt: new Date().toISOString() })} onOpenSchedule={() => setPage("sessionSchedule")} />}
+        {page === "sessionSchedule" && <SchedulePage sessions={sessions} lectures={lectures} onSave={saveSession} onUpdate={updateSession} onDelete={deleteSession} onPreferenceChange={updatePreference} timeFormat={profile?.timeFormat} selectedLecture={selectedLecture} clearSelected={() => setSelectedLecture(null)} />}
         {page === "viewer" && selectedLecture && <LectureViewer lecture={selectedLecture} onBack={() => go("lectures")} onToggle={() => toggleStudied(selectedLecture.id)} onSchedule={() => addToSchedule(selectedLecture)} onQuiz={() => startQuiz(selectedLecture)} onCustomizeSettings={() => openQuizOptions(selectedLecture)} generating={Boolean(generatingLectureId)} onSummarize={() => summarizeLecture(selectedLecture)} summarizing={summarizingLectureId === selectedLecture.id} />}
         {page === "quizRun" && quizState && <QuizRun state={quizState} lecture={selectedLecture} onChange={setQuizState} onFinish={finishQuiz} onRetry={retryQuiz} onReview={goToQuizReview} onBack={() => go("quizzes")} />}
         {page === "quizSetup" && selectedLecture && <QuizSetup lecture={selectedLecture} requestedCount={quizSetupCount} onSave={saveCustomQuestions} onBack={() => go("quizzes")} />}
         {page === "quizOptions" && selectedLecture && <QuizOptions lecture={selectedLecture} onStart={startConfiguredQuiz} onBack={() => go("quizzes")} isGenerating={Boolean(generatingLectureId)} error={quizGenerationError} />}
-        {page === "quizReview" && quizState && <QuizReview state={quizState} lecture={selectedLecture} onStudy={() => openLecture(selectedLecture)} onRetry={retryQuiz} onBack={() => setPage("quizRun")} />}
+        {page === "quizReview" && quizState && <QuizReview state={quizState} lecture={selectedLecture} onStudy={() => openLecture(selectedLecture)} onRetry={retryQuiz} onRetryIncorrect={retryIncorrectQuestions} onBack={() => setPage("quizRun")} />}
         {page === "quizzes" && <QuizHistory attempts={attempts} lectures={lectures} savedQuizzes={savedQuizzes} onQuiz={startQuiz} onCustomizeSettings={openQuizOptions} onEditQuestions={customizeQuiz} onOpenSaved={openSavedQuiz} generatingLectureId={generatingLectureId} error={quizGenerationError} />}
-        {page === "progress" && <ProgressPage lectures={lectures} attempts={attempts} studied={studied} completion={completion} />}
+        {page === "progress" && <AnalyticsPage lectures={lectures} attempts={attempts} sessions={sessions} focusSessions={focusSessions} preferences={profile} />}
+        {page === "flashcards" && <FlashcardsPage cards={flashcards} lectures={lectures} onCreate={createFlashcard} onUpdate={updateFlashcard} onDelete={deleteFlashcard} notify={notify} />}
+        {page === "assistant" && <AssistantPage lectures={lectures} onAsk={askAssistant} onSaveCards={saveAssistantCards} onSaveQuestions={saveAssistantQuestions} />}
+        {page === "focus" && <FocusTimerPage focusSessions={focusSessions} preferences={profile} onPreferenceChange={updatePreference} onComplete={saveFocusSession} />}
+        {page === "achievements" && <AchievementsPage metrics={achievementMetrics} achievements={achievements} onUnlock={awardAchievement} />}
+        {page === "settings" && <SettingsPage profile={profile} onPreferenceChange={updatePreference} onEditProfile={() => setProfileEditorOpen(true)} onLogout={logout} />}
+        </Suspense>
       </div>
     </SidebarInset>
     {toast && <div className="toast">✓ &nbsp;{toast}</div>}
@@ -1019,17 +1259,22 @@ function ProfileEditor({ profile, onSave, onClose, onLogout }) {
 
 function PageHeading({ eyebrow, title, subtitle, action }) { return <div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p className="subheading">{subtitle}</p></div>{action}</div>; }
 function ProgressBar({ value, color = "green" }) { return <div className={`progress-bar ${color}`}><span style={{ width: `${value}%` }} /></div>; }
-function Dashboard({ lectures, sessions, completion, studied, onNavigate, onOpen, onAdd }) {
-  const hour = new Date().getHours(); const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
-  const todays = sessions.filter((s) => s.date === today()).sort((a, b) => a.start.localeCompare(b.start));
-  const next = sessions.filter((s) => s.date > today()).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
-  return <><PageHeading eyebrow="TUESDAY, SEPTEMBER 24" title={`${greeting}, Student`} subtitle="Welcome back to your study space. One focused session at a time." action={<button className="button primary" onClick={onAdd}>＋ Add lecture</button>} />
-    <div className="stats-grid"><Stat icon="▤" tint="lavender" label="In your library" value={lectures.length} foot="Study materials" /><Stat icon="✓" tint="mint" label="Studied so far" value={`${studied} / ${lectures.length}`} foot={`${completion}% of your lectures`} /><Stat icon="◷" tint="peach" label="Sessions today" value={todays.length} foot="Keep your rhythm" /><Stat icon="✧" tint="blue" label="Quiz attempts" value={lectures.length ? "Ready" : "—"} foot="Practice as often as you like" /> </div>
-    <div className="dashboard-grid"><section className="panel focus-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR OVERVIEW</p><h2>Study progress</h2></div><button className="text-button" onClick={() => onNavigate("progress")}>See progress <span>→</span></button></div><div className="progress-overview"><div className="ring" style={{ "--progress": `${completion}%` }}><div><strong>{completion}%</strong><span>complete</span></div></div><div className="progress-copy"><strong>{studied} of {lectures.length} lectures studied</strong><p>You’re building a great habit. Keep going at your own pace.</p><ProgressBar value={completion} /><button className="button secondary small" onClick={() => onNavigate("checklist")}>Open checklist</button></div></div><div className="panel-divider"/><div className="panel-heading compact"><div><p className="eyebrow">PICK UP WHERE YOU LEFT OFF</p><h2>Recently added</h2></div><button className="text-button" onClick={() => onNavigate("lectures")}>All lectures →</button></div><div className="recent-list">{lectures.slice(0, 3).map((lecture) => <button className="recent-row" key={lecture.id} onClick={() => onOpen(lecture)}><div className="subject-icon">{lecture.subject.slice(0, 1)}</div><div className="recent-info"><strong>{lecture.title}</strong><span>{lecture.subject} · {lecture.studied ? "Studied" : "Not studied"}</span></div><span className="row-arrow">↗</span></button>)}</div></section>
-      <section className="panel schedule-panel"><div className="panel-heading"><div><p className="eyebrow">STAY ON TRACK</p><h2>Today’s schedule</h2></div><button className="icon-button" onClick={() => onNavigate("schedule")}>＋</button></div>{todays.length ? <div className="timeline">{todays.map((s) => <div className="timeline-row" key={s.id}><div className="timeline-time">{fmtTime(s.start)}</div><div className={`timeline-dot ${s.completed ? "done" : ""}`} /><div className="timeline-card"><div className="timeline-top"><strong>{s.subject}</strong><span className={`status ${s.completed ? "complete" : "upcoming"}`}>{s.completed ? "Completed" : "Upcoming"}</span></div><p>{s.topic}</p><span>{fmtTime(s.start)} – {fmtTime(s.end)}</span></div></div>)}</div> : <Empty text="No sessions planned for today." action="Add a study session" onClick={() => onNavigate("schedule")} />}<div className="upcoming-block"><div className="panel-heading compact"><div><p className="eyebrow">NEXT UP</p><h2>Coming soon</h2></div></div>{next.length ? next.map((s) => <div className="upcoming-row" key={s.id}><span className="upcoming-date">{new Date(`${s.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}</span><span><strong>{s.topic}</strong><small>{s.subject} · {fmtDate(s.date, { month: "short", day: "numeric" })}</small></span><span className="upcoming-arrow">→</span></div>) : <p className="muted small-text">Your calendar is clear. Plan a review session.</p>}</div></section></div>
-    <section className="quick-actions"><div><p className="eyebrow">MAKE IT COUNT</p><h2>What would you like to do?</h2></div><div className="quick-grid"><QuickAction icon="▤" title="Add a lecture" subtitle="Save new study materials" onClick={onAdd} /><QuickAction icon="✓" title="Study checklist" subtitle="Check off a topic" onClick={() => onNavigate("checklist")} /><QuickAction icon="▦" title="Plan a session" subtitle="Make time to review" onClick={() => onNavigate("schedule")} /><QuickAction icon="✧" title="Take a quiz" subtitle="Practice your recall" onClick={() => onNavigate("quizzes")} /></div></section></>;
-}
+function Dashboard({ lectures, sessions, attempts, profile, completion, studied, onNavigate, onOpen, onAdd }) {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const firstName = profile?.name?.trim().split(/\s+/)[0] || "Student";
+  const todays = sessions.filter((session) => session.date === today()).sort((a, b) => a.start.localeCompare(b.start));
+  const next = sessions.filter((session) => session.date > today()).sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start)).slice(0, 3);
+  const recentLectures = lectures.slice().sort((a, b) => (b.lastViewedAt || b.dateAdded || "").localeCompare(a.lastViewedAt || a.dateAdded || "")).slice(0, 3);
+  return <>
+    <PageHeading eyebrow={new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }).toUpperCase()} title={`${greeting}, ${firstName}`} subtitle="Welcome back to your study space. One focused session at a time." action={<button className="button primary" onClick={onAdd}><Plus size={15} /> Add material</button>} />
+    <div className="stats-grid"><Stat icon="▤" tint="lavender" label="In your library" value={lectures.length} foot="Study materials" /><Stat icon="✓" tint="mint" label="Studied so far" value={`${studied} / ${lectures.length}`} foot={`${completion}% of your materials`} /><Stat icon="◷" tint="peach" label="Sessions today" value={todays.length} foot="Keep your rhythm" /><Stat icon="✧" tint="blue" label="Quiz attempts" value={attempts.length} foot="Every attempt counts" /></div>
+    <div className="dashboard-grid"><section className="panel focus-panel"><div className="panel-heading"><div><p className="eyebrow">YOUR OVERVIEW</p><h2>Study progress</h2></div><button className="text-button" onClick={() => onNavigate("progress")}>See analytics <span>→</span></button></div><div className="progress-overview"><div className="ring" style={{ "--progress": `${completion}%` }}><div><strong>{completion}%</strong><span>complete</span></div></div><div className="progress-copy"><strong>{studied} of {lectures.length} materials studied</strong><p>You are building a great habit. Keep going at your own pace.</p><ProgressBar value={completion} /><button className="button secondary small" onClick={() => onNavigate("checklist")}>Open My Learning</button></div></div><div className="panel-divider"/><div className="panel-heading compact"><div><p className="eyebrow">PICK UP WHERE YOU LEFT OFF</p><h2>Recently viewed</h2></div><button className="text-button" onClick={() => onNavigate("lectures")}>All materials →</button></div><div className="recent-list">{recentLectures.length ? recentLectures.map((lecture) => <button className="recent-row" key={lecture.id} onClick={() => onOpen(lecture)}><div className="subject-icon">{(lecture.subject || "S").slice(0, 1)}</div><div className="recent-info"><strong>{lecture.title}</strong><span>{lecture.subject || "General"} · {lecture.studied ? "Studied" : "Not studied"}</span></div><span className="row-arrow">↗</span></button>) : <Empty text="Your saved learning materials will appear here." action="Add your first material" onClick={onAdd} />}</div></section>
+      <section className="panel schedule-panel"><div className="panel-heading"><div><p className="eyebrow">STAY ON TRACK</p><h2>Today's schedule</h2></div><button className="icon-button" onClick={() => onNavigate("schedule")} aria-label="Open study planner"><Plus size={16} /></button></div>{todays.length ? <div className="timeline">{todays.map((session) => <div className="timeline-row" key={session.id}><div className="timeline-time">{fmtTime(session.start)}</div><div className={`timeline-dot ${session.completed ? "done" : ""}`} /><div className="timeline-card"><div className="timeline-top"><strong>{session.subject}</strong><span className={`status ${session.completed ? "complete" : "upcoming"}`}>{session.completed ? "Completed" : "Upcoming"}</span></div><p>{session.topic}</p><span>{fmtTime(session.start)} – {fmtTime(session.end)}</span></div></div>)}</div> : <Empty text="No sessions planned for today." action="Open your study planner" onClick={() => onNavigate("schedule")} />}<div className="upcoming-block"><div className="panel-heading compact"><div><p className="eyebrow">NEXT UP</p><h2>Coming soon</h2></div></div>{next.length ? next.map((session) => <div className="upcoming-row" key={session.id}><span className="upcoming-date">{new Date(`${session.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}</span><span><strong>{session.topic}</strong><small>{session.subject} · {fmtDate(session.date, { month: "short", day: "numeric" })}</small></span><span className="upcoming-arrow">→</span></div>) : <p className="muted small-text">Your calendar is clear. Plan a review session.</p>}</div></section></div>
+    <section className="quick-actions"><div><p className="eyebrow">MAKE IT COUNT</p><h2>What would you like to do?</h2></div><div className="quick-grid"><QuickAction icon="▤" title="Add material" subtitle="Save notes or a lecture file" onClick={onAdd} /><QuickAction icon="✓" title="My Learning" subtitle="Check off a topic" onClick={() => onNavigate("checklist")} /><QuickAction icon="▦" title="Study planner" subtitle="Plan a session or deadline" onClick={() => onNavigate("schedule")} /><QuickAction icon="✧" title="Take a quiz" subtitle="Practice your recall" onClick={() => onNavigate("quizzes")} /><QuickAction icon="▣" title="Review flashcards" subtitle="Practice active recall" onClick={() => onNavigate("flashcards")} /><QuickAction icon="◷" title="Focus timer" subtitle="Set aside a study block" onClick={() => onNavigate("focus")} /></div></section>
+  </>;
 function Stat({ icon, tint, label, value, foot }) { return <div className="stat-card"><div className={`stat-icon ${tint}`}>{icon}</div><span className="stat-label">{label}</span><strong className="stat-value">{value}</strong><span className="stat-foot">{foot}</span></div>; }
+
 function QuickAction({ icon, title, subtitle, onClick }) { return <button className="quick-action" onClick={onClick}><span className="quick-icon">{icon}</span><span><strong>{title}</strong><small>{subtitle}</small></span><span className="row-arrow">↗</span></button>; }
 function Empty({ text, action, onClick }) { return <div className="empty-state"><span>✦</span><p>{text}</p>{action && <button className="text-button" onClick={onClick}>{action} →</button>}</div>; }
 
@@ -1131,45 +1376,70 @@ function QuizSetup({ lecture, requestedCount, onSave, onBack }) {
   return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-setup"><p className="eyebrow">CUSTOMIZE THIS QUIZ · OPTIONAL</p><h1>{lecture.title}</h1><p className="subheading">{countMessage}</p>{requestedCount && validQuestionCount < requestedCount && <p className="quiz-setup-message" role="alert">Add {requestedCount - validQuestionCount} more valid, distinct question{requestedCount - validQuestionCount === 1 ? "" : "s"} to start this quiz.</p>}<form className="question-builder" onSubmit={addQuestion}><label>Question<textarea required rows="2" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Write a question from the lecture notes" /></label><div className="builder-options">{options.map((option, index) => <label key={index}>Choice {String.fromCharCode(65 + index)}<input required value={option} onChange={(event) => setOptions((items) => items.map((item, i) => i === index ? event.target.value : item))} placeholder={`Answer choice ${index + 1}`} /></label>)}</div><label>Correct answer<select value={answerIndex} onChange={(event) => setAnswerIndex(Number(event.target.value))}>{options.map((option, index) => <option key={index} value={index}>Choice {String.fromCharCode(65 + index)}{option.trim() ? ` — ${option}` : ""}</option>)}</select></label>{error && <p className="quiz-setup-message" role="alert">{error}</p>}<button className="button secondary" disabled={questions.length >= 20}>＋ Add question</button></form><div className="builder-list"><div className="panel-heading"><h2>Your questions</h2><span>{validQuestionCount} added</span></div>{questions.length ? questions.map((item, index) => <div className="builder-question" key={`${item.question}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{item.question}</strong><small>Correct answer: {answerText(item.correctAnswer ?? item.answer)}</small></div><button type="button" className="text-button delete-text" onClick={() => setQuestions((items) => items.filter((_, i) => i !== index))}>Remove</button></div>) : <p className="muted small-text">No questions yet. Add questions here, or provide more lecture text if generation could not find enough.</p>}</div><div className="form-actions"><button type="button" className="button secondary" onClick={onBack}>Cancel</button><button type="button" className="button primary" disabled={validQuestionCount < requiredCount || validQuestionCount > 20} onClick={() => onSave(questions, requestedCount)}>{validQuestionCount < requiredCount ? `Add ${requiredCount - validQuestionCount} more question${requiredCount - validQuestionCount === 1 ? "" : "s"}` : requestedCount ? `Save & start ${requestedCount}-question quiz` : "Save & start quiz"}</button></div></section></>;
 }
 
-function LecturesPage({ lectures, search, setSearch, onOpen, onToggle, onQuiz, onCustomizeSettings, generatingLectureId, onAdd }) {
+function LecturesPage({ lectures, search, setSearch, onOpen, onToggle, onFavorite, onDelete, onQuiz, onCustomizeSettings, generatingLectureId, onAdd }) {
   const [showForm, setShowForm] = useState(false);
-  const [filter, setFilter] = useState("All");
-  const subjects = ["All", ...new Set(lectures.map((item) => item.subject))];
-  const shown = filter === "All" ? lectures : lectures.filter((item) => item.subject === filter);
-  function submit(form) { onAdd(form); setShowForm(false); }
-  return <><PageHeading eyebrow="YOUR PERSONAL LIBRARY" title="My lectures" subtitle="Keep your notes, videos, and study resources all in one place." action={<button className="button primary" onClick={() => setShowForm(!showForm)}>{showForm ? "× Close" : "＋ Add lecture"}</button>} />
-    {showForm && <LectureForm onSave={submit} onCancel={() => setShowForm(false)} />}
-    <div className="library-toolbar"><label className="search-box"><span>⌕</span><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search lectures, subjects, or topics..." /></label><div className="filter-chips">{subjects.map((item) => <button className={`filter-chip ${filter === item ? "selected" : ""}`} key={item} onClick={() => setFilter(item)}>{item}</button>)}</div></div>
-    {shown.length ? <div className="lecture-grid">{shown.map((lecture) => <LectureCard key={lecture.id} lecture={lecture} onOpen={onOpen} onToggle={onToggle} onQuiz={onQuiz} onCustomizeSettings={onCustomizeSettings} generating={generatingLectureId === lecture.id} generationInProgress={Boolean(generatingLectureId)} />)}</div> : <div className="panel empty-library"><span>▤</span><h2>No lectures found</h2><p>Try a different search or add a new study material.</p><button className="button secondary" onClick={() => setShowForm(true)}>＋ Add lecture</button></div>}</>;
+  const [editing, setEditing] = useState(null);
+  const [subject, setSubject] = useState("All");
+  const [libraryView, setLibraryView] = useState("all");
+  const subjects = ["All", ...new Set(lectures.map((item) => item.subject || "General"))];
+  let shown = subject === "All" ? lectures : lectures.filter((item) => (item.subject || "General") === subject);
+  if (libraryView === "favorites") shown = shown.filter((item) => item.favorite);
+  if (libraryView === "recent") shown = shown.filter((item) => item.lastViewedAt).slice().sort((a, b) => b.lastViewedAt.localeCompare(a.lastViewedAt));
+  function openNew() { setEditing(null); setShowForm((value) => !value); }
+  function openEdit(lecture) { setEditing(lecture); setShowForm(true); }
+  async function submit(form) { const saved = await onAdd(form); if (saved === false) return; setShowForm(false); setEditing(null); }
+  return <>
+    <PageHeading eyebrow="YOUR PERSONAL LIBRARY" title="Learning materials" subtitle="Keep notes, videos, presentations, and study resources together." action={<button className="button primary" onClick={openNew}>{showForm && !editing ? "Close" : <><Plus size={15} /> Add material</>}</button>} />
+    {showForm && <LectureForm initial={editing} onSave={submit} onCancel={() => { setShowForm(false); setEditing(null); }} />}
+    <div className="library-toolbar"><label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search materials, subjects, modules, or topics..." /></label><div className="filter-chips library-view-filters" role="group" aria-label="Filter materials"><button className={`filter-chip ${libraryView === "all" ? "selected" : ""}`} onClick={() => setLibraryView("all")}>All materials</button><button className={`filter-chip ${libraryView === "favorites" ? "selected" : ""}`} onClick={() => setLibraryView("favorites")}>Favorites</button><button className={`filter-chip ${libraryView === "recent" ? "selected" : ""}`} onClick={() => setLibraryView("recent")}>Recently viewed</button></div><div className="filter-chips">{subjects.map((item) => <button className={`filter-chip ${subject === item ? "selected" : ""}`} key={item} onClick={() => setSubject(item)}>{item}</button>)}</div></div>
+    {shown.length ? <div className="lecture-grid">{shown.map((lecture) => <LectureCard key={lecture.id} lecture={lecture} onOpen={onOpen} onToggle={onToggle} onFavorite={onFavorite} onDelete={onDelete} onEdit={() => openEdit(lecture)} onQuiz={onQuiz} onCustomizeSettings={onCustomizeSettings} generating={generatingLectureId === lecture.id} generationInProgress={Boolean(generatingLectureId)} />)}</div> : <div className="panel empty-library"><span><BookOpen /></span><h2>{libraryView === "favorites" ? "No favorites yet" : libraryView === "recent" ? "Nothing viewed yet" : "No materials found"}</h2><p>{libraryView === "favorites" ? "Bookmark a material with the star to find it here." : libraryView === "recent" ? "Open a material and it will appear in this list." : "Try a different search or add a new study material."}</p><button className="button secondary" onClick={() => { setLibraryView("all"); setSubject("All"); if (!search) setShowForm(true); }}>{libraryView === "all" ? "Add material" : "Show all materials"}</button></div>}
+  </>;
 }
-function LectureCard({ lecture, onOpen, onToggle, onQuiz, onCustomizeSettings, generating, generationInProgress }) { return <article className="lecture-card"><div className="lecture-card-top"><div className="file-icon">{lecture.fileType?.includes("pdf") ? "PDF" : lecture.fileType?.startsWith("video") ? "▶" : "▤"}</div><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "✓ Studied" : "Not studied"}</span></div><span className="subject-label">{lecture.subject}</span><h3>{lecture.title}</h3><p className="lecture-desc">{lecture.description || "No description added yet."}</p><div className="lecture-meta">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}{lecture.fileName && <span> · {lecture.fileName}</span>}</div><div className="lecture-actions"><button className="button secondary small" onClick={() => onOpen(lecture)}>Open lecture</button><button className="icon-button" disabled={generationInProgress} title={generating ? "Generating your quiz…" : "Generate quiz now"} aria-label={generating ? "Generating your quiz" : `Generate quiz now for ${lecture.title}`} onClick={() => onQuiz(lecture)}>{generating ? "…" : "✧"}</button><button className="icon-button" disabled={generationInProgress} title="Customize quiz" aria-label={`Customize quiz for ${lecture.title}`} onClick={() => onCustomizeSettings(lecture)}>⚙</button><button className="icon-button" title={lecture.studied ? "Mark as not studied" : "Mark as studied"} onClick={() => onToggle(lecture.id)}>{lecture.studied ? "✓" : "○"}</button></div></article>; }
-function LectureForm({ onSave, onCancel }) {
-  const [form, setForm] = useState({ title: "", subject: "", description: "", lectureContent: "", fileName: "", fileType: "", fileData: "", fileSize: 0, youtubeUrl: "" }); const [busy, setBusy] = useState(false); const [extractMessage, setExtractMessage] = useState(""); const fileInput = useRef(null);
+function LectureCard({ lecture, onOpen, onToggle, onFavorite, onDelete, onEdit, onQuiz, onCustomizeSettings, generating, generationInProgress }) {
+  const typeLabel = lecture.fileType?.includes("pdf") ? "PDF" : lecture.fileType?.includes("presentation") || lecture.fileName?.toLowerCase().endsWith(".pptx") ? "PPT" : lecture.fileType?.includes("word") || lecture.fileName?.toLowerCase().endsWith(".docx") ? "DOC" : lecture.fileType?.startsWith("video") ? "VIDEO" : "NOTE";
+  return <article className="lecture-card"><div className="lecture-card-top"><div className="file-icon">{typeLabel}</div><div className="lecture-card-top-actions"><button type="button" className={`icon-button favorite-button${lecture.favorite ? " is-favorite" : ""}`} title={lecture.favorite ? "Remove bookmark" : "Bookmark material"} aria-label={lecture.favorite ? `Remove ${lecture.title} from favorites` : `Add ${lecture.title} to favorites`} aria-pressed={Boolean(lecture.favorite)} onClick={() => onFavorite(lecture.id)}><Star size={15} fill={lecture.favorite ? "currentColor" : "none"} /></button><span className={`status ${lecture.studied ? "complete" : "pending"}`}>{lecture.studied ? "Studied" : "Not studied"}</span></div></div><span className="subject-label">{lecture.subject || "General"}</span><h3>{lecture.title}</h3><p className="lecture-desc">{lecture.description || "No description added yet."}</p><div className="lecture-taxonomy">{[lecture.module, lecture.chapter, lecture.topic].filter(Boolean).join(" · ")}</div><div className="lecture-meta">Added {lecture.dateAdded ? fmtDate(lecture.dateAdded, { month: "short", day: "numeric" }) : "recently"}{lecture.fileName && <span> · {lecture.fileName}</span>}</div><div className="lecture-actions"><button className="button secondary small" onClick={() => onOpen(lecture)}>Open material</button><button className="icon-button" disabled={generationInProgress} title={generating ? "Generating quiz..." : "Generate quiz"} aria-label={`Generate quiz for ${lecture.title}`} onClick={() => onQuiz(lecture)}>{generating ? "..." : "Q"}</button><button className="icon-button" disabled={generationInProgress} title="Quiz settings" aria-label={`Customize quiz for ${lecture.title}`} onClick={() => onCustomizeSettings(lecture)}>⚙</button><button className="icon-button" title={lecture.studied ? "Mark as not studied" : "Mark as studied"} aria-label={lecture.studied ? "Mark as not studied" : "Mark as studied"} onClick={() => onToggle(lecture.id)}>{lecture.studied ? "✓" : "○"}</button><button className="icon-button" title="Edit material" aria-label={`Edit ${lecture.title}`} onClick={onEdit}><Pencil size={14} /></button><button className="icon-button delete-material-button" title="Delete material" aria-label={`Delete ${lecture.title}`} onClick={() => onDelete(lecture.id)}><Trash2 size={14} /></button></div></article>;
+}
+function LectureForm({ initial, onSave, onCancel }) {
+
+  const [form, setForm] = useState(() => ({ title: "", subject: "", module: "", chapter: "", topic: "", description: "", lectureContent: "", fileName: "", fileType: "", fileData: "", fileSize: 0, youtubeUrl: "", ...initial, youtubeUrl: initial?.fileType === "video/youtube" ? initial.fileName : initial?.youtubeUrl || "" }));
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [extractMessage, setExtractMessage] = useState("");
+  const [error, setError] = useState("");
+  const fileInput = useRef(null);
   function set(key, value) { setForm((state) => ({ ...state, [key]: value })); }
-  function removeAttachment() { setForm((state) => ({ ...state, fileName: "", fileType: "", fileData: "", fileSize: 0 })); setExtractMessage(""); if (fileInput.current) fileInput.current.value = ""; }
+  function removeAttachment() { setForm((state) => ({ ...state, fileName: "", fileType: "", fileData: "", fileSize: 0, youtubeUrl: "" })); setExtractMessage(""); if (fileInput.current) fileInput.current.value = ""; }
   async function attach(file) {
     if (!file) return;
+    setError("");
     const extension = file.name.split(".").pop()?.toLowerCase();
-    const videoMimeByExtension = { mp4: "video/mp4", mpeg: "video/mpeg", mpg: "video/mpg", mov: "video/mov", avi: "video/avi", flv: "video/x-flv", webm: "video/webm", wmv: "video/wmv", "3gp": "video/3gpp" };
-    const fileType = videoMimeByExtension[extension] || file.type;
-    set("fileName", file.name); set("fileType", fileType); set("fileSize", file.size); setBusy(true); setExtractMessage("Reading lecture text…");
+    const types = { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", txt: "text/plain", mp4: "video/mp4", mpeg: "video/mpeg", mpg: "video/mpg", mov: "video/quicktime", avi: "video/x-msvideo", flv: "video/x-flv", webm: "video/webm", wmv: "video/x-ms-wmv", "3gp": "video/3gpp" };
+    const fileType = types[extension];
+    if (!fileType) { setError("Use a PDF, DOCX, PPTX, text, or supported video file."); if (fileInput.current) fileInput.current.value = ""; return; }
+    if (file.size > 25 * 1024 * 1024) { setError("Files must be 25 MB or smaller. Video previews and AI processing are limited to 3 MB."); if (fileInput.current) fileInput.current.value = ""; return; }
+    if (fileType.startsWith("video/") && file.size > 3 * 1024 * 1024) { setError("Video files must be 3 MB or smaller. For a longer lecture, paste a YouTube link or transcript."); if (fileInput.current) fileInput.current.value = ""; return; }
+    setForm((state) => ({ ...state, fileName: file.name, fileType, fileSize: file.size, fileData: "", youtubeUrl: "" }));
+    setBusy(true); setExtractMessage(fileType.startsWith("video/") ? "Video ready. Add a transcript in lecture notes to ground summaries and AI help." : "Reading lecture text...");
     const fileDataPromise = file.size <= 3 * 1024 * 1024 ? new Promise((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = () => resolve(""); reader.readAsDataURL(file); }) : Promise.resolve("");
-    if (file.size > 3 * 1024 * 1024) setExtractMessage("File is over 3 MB; text can still be extracted, but the file itself will not be saved for preview.");
-    if (fileType.startsWith("video/")) {
-      set("fileData", await fileDataPromise);
-      setExtractMessage(file.size <= 3 * 1024 * 1024 ? "Video attached. Gemini will create study notes from its audio and visuals when you summarize." : "Video saved without its data because it exceeds 3 MB. Compress it or paste a transcript to summarize it.");
-      setBusy(false); return;
-    }
+    if (fileType.startsWith("video/")) { setForm((state) => ({ ...state, fileData: "" })); setBusy(false); return; }
     try {
-      const [extracted, fileData] = await Promise.all([extractLectureText(file, file.name, file.type), fileDataPromise]);
-      set("fileData", fileData);
-      set("lectureContent", extracted.slice(0, 90000)); setExtractMessage(`Read ${extracted.length.toLocaleString()} characters from this file.`);
-    } catch (error) { setExtractMessage(error.message || "Could not extract text; you can paste notes below."); }
-    setBusy(false);
+      const [extracted, fileData] = await Promise.all([extractLectureText(file, file.name, fileType), fileDataPromise]);
+      setForm((state) => ({ ...state, fileData, lectureContent: extracted.slice(0, 90000) }));
+      setExtractMessage(`Read ${extracted.length.toLocaleString()} characters from this file.`);
+    } catch (fileError) { setExtractMessage(fileError.message || "Could not extract text. You can paste notes below."); }
+    finally { setBusy(false); }
   }
-  return <form className="panel form-panel" onSubmit={(e) => { e.preventDefault(); onSave({ ...form, fileName: form.fileName || form.youtubeUrl, fileType: form.fileType || (form.youtubeUrl ? "video/youtube" : ""), fileData: form.fileData || "", lectureContent: form.lectureContent.trim() }); }}><div className="panel-heading"><div><p className="eyebrow">NEW MATERIAL</p><h2>Add a lecture</h2></div></div><div className="form-grid"><label>Lecture title<input required value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="e.g. Kidney Function Tests" /></label><label>Subject<input required value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="e.g. Clinical Chemistry" /></label><label className="wide">Description<textarea value={form.description} onChange={(e) => set("description", e.target.value)} rows="2" placeholder="A short note about what this lecture covers" /></label><label className="wide">Lecture notes or video transcript<textarea value={form.lectureContent} onChange={(e) => set("lectureContent", e.target.value)} rows="4" placeholder="File text is extracted here. Paste captions or a transcript if the video is too large." /></label><label>YouTube URL<input type="url" value={form.youtubeUrl} onChange={(e) => set("youtubeUrl", e.target.value)} placeholder="https://www.youtube.com/watch?v=..." /></label><label className="upload-field">Study material<input ref={fileInput} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.mpeg,.mpg,.mov,.avi,.flv,.webm,.wmv,.3gp,.txt" onChange={(e) => attach(e.target.files?.[0])} /><small>PDF, DOCX, PPTX, text, or video · Videos up to 3 MB</small>{form.fileName && <Attachment state={busy ? "processing" : "done"} size="sm" className="lecture-file-attachment"><AttachmentMedia>{form.fileType.startsWith("video/") ? <FileVideo size={18} /> : <FileText size={18} />}</AttachmentMedia><AttachmentContent><AttachmentTitle title={form.fileName}>{form.fileName}</AttachmentTitle><AttachmentDescription>{form.fileSize >= 1024 * 1024 ? `${(form.fileSize / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(form.fileSize / 1024))} KB`} · {busy ? "Processing…" : "Ready"}</AttachmentDescription></AttachmentContent><AttachmentActions><AttachmentAction aria-label={`Remove ${form.fileName}`} title="Remove attachment" onClick={removeAttachment}><X size={15} /></AttachmentAction></AttachmentActions></Attachment>}{extractMessage && <small className="extract-message">{extractMessage}</small>}</label></div><div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>Cancel</button><button className="button primary" disabled={busy}>Save lecture</button></div></form>;
+  async function submit(event) {
+    event.preventDefault(); setError("");
+    if (form.youtubeUrl && !/^https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+|shorts\/[\w-]+|live\/[\w-]+)|youtu\.be\/[\w-]+)/i.test(form.youtubeUrl.trim())) { setError("Enter a valid YouTube video link."); return; }
+    setSaving(true);
+    try { await onSave({ ...form, fileName: form.youtubeUrl.trim() || form.fileName, fileType: form.youtubeUrl.trim() ? "video/youtube" : form.fileType, fileData: form.fileData || "", lectureContent: form.lectureContent.trim() }); }
+    finally { setSaving(false); }
+  }
+  return <form className="panel form-panel" onSubmit={submit}><div className="panel-heading"><div><p className="eyebrow">{initial ? "EDIT YOUR LIBRARY" : "NEW MATERIAL"}</p><h2>{initial ? "Update learning material" : "Add learning material"}</h2></div></div><div className="form-grid"><label>Material title<input required maxLength="160" value={form.title} onChange={(event) => set("title", event.target.value)} placeholder="e.g. Kidney Function Tests" /></label><label>Subject<input required maxLength="100" value={form.subject} onChange={(event) => set("subject", event.target.value)} placeholder="e.g. Clinical Chemistry" /></label><label>Module<input maxLength="100" value={form.module} onChange={(event) => set("module", event.target.value)} placeholder="e.g. Module 2" /></label><label>Chapter<input maxLength="100" value={form.chapter} onChange={(event) => set("chapter", event.target.value)} placeholder="e.g. Chapter 4" /></label><label>Topic<input maxLength="100" value={form.topic} onChange={(event) => set("topic", event.target.value)} placeholder="e.g. Glomerular filtration" /></label><label>YouTube lecture URL<input type="url" value={form.youtubeUrl} onChange={(event) => { const value = event.target.value; setForm((state) => ({ ...state, youtubeUrl: value, ...(value ? { fileName: "", fileType: "", fileData: "", fileSize: 0 } : {}) })); }} placeholder="https://www.youtube.com/watch?v=..." /></label><label className="wide">Description<textarea value={form.description} onChange={(event) => set("description", event.target.value)} rows="2" placeholder="A short note about what this material covers" /></label><label className="wide">Lecture notes or transcript<textarea value={form.lectureContent} onChange={(event) => set("lectureContent", event.target.value)} rows="5" maxLength="90000" placeholder="Extracted document text appears here. Paste captions or your own notes." /></label><label className="upload-field wide">Study file<input ref={fileInput} type="file" accept=".pdf,.docx,.pptx,.txt,.mp4,.mpeg,.mpg,.mov,.avi,.flv,.webm,.wmv,.3gp" onChange={(event) => attach(event.target.files?.[0])} /><small>PDF, Word DOCX, PowerPoint PPTX, text, or video up to 3 MB. Documents can be up to 25 MB.</small>{form.fileName && <Attachment state={busy ? "processing" : "done"} size="sm" className="lecture-file-attachment"><AttachmentMedia>{form.fileType.startsWith("video/") ? <FileVideo size={18} /> : <FileText size={18} />}</AttachmentMedia><AttachmentContent><AttachmentTitle title={form.fileName}>{form.fileName}</AttachmentTitle><AttachmentDescription>{form.fileSize >= 1024 * 1024 ? `${(form.fileSize / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(form.fileSize / 1024))} KB`} · {busy ? "Processing..." : "Ready"}</AttachmentDescription></AttachmentContent><AttachmentActions><AttachmentAction aria-label={`Remove ${form.fileName}`} title="Remove attachment" onClick={removeAttachment}><X size={15} /></AttachmentAction></AttachmentActions></Attachment>}{extractMessage && <small className="extract-message">{extractMessage}</small>}</label></div>{error && <p className="auth-error" role="alert">{error}</p>}<div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>Cancel</button><button className="button primary" disabled={busy || saving}>{saving ? "Saving..." : initial ? "Save changes" : "Save material"}</button></div></form>;
 }
 function Checklist({ lectures, studied, completion, onToggle }) { const groups = [...new Set(lectures.map((l) => l.subject))]; return <><PageHeading eyebrow="A LITTLE PROGRESS ADDS UP" title="Study checklist" subtitle="Mark topics as you study them. You can always revisit one later." /><section className="panel checklist-overview"><div className="checklist-summary"><div><p className="eyebrow">OVERALL STUDY PROGRESS</p><h2>{studied} of {lectures.length} lectures studied</h2><p className="muted">{completion}% of your study library is complete</p></div><strong>{completion}%</strong></div><ProgressBar value={completion} /></section><div className="checklist-groups">{groups.map((subject) => { const items = lectures.filter((l) => l.subject === subject); const done = items.filter((l) => l.studied).length; return <section className="panel checklist-group" key={subject}><div className="check-group-title"><div className="subject-icon">{subject.slice(0, 1)}</div><div><h2>{subject}</h2><span>{done} of {items.length} completed</span></div><ProgressBar value={percent(done, items.length)} /></div>{items.map((lecture) => <label key={lecture.id} className={`check-item ${lecture.studied ? "checked" : ""}`}><input type="checkbox" checked={lecture.studied} onChange={() => onToggle(lecture.id)} /><span className="custom-check">✓</span><span>{lecture.title}</span><span className="check-date">Added {fmtDate(lecture.dateAdded, { month: "short", day: "numeric" })}</span></label>)}</section>; })}{!lectures.length && <Empty text="Add a lecture to start your checklist." />}</div></>; }
+
 
 function SchedulePage({ sessions, lectures, onSave, onUpdate, onDelete, onPreferenceChange, timeFormat, selectedLecture, clearSelected }) {
   const [editing, setEditing] = useState(null); const [formOpen, setFormOpen] = useState(Boolean(selectedLecture));
@@ -1182,7 +1452,7 @@ function SchedulePage({ sessions, lectures, onSave, onUpdate, onDelete, onPrefer
   function remove(id) { onDelete(id); }
   function toggle(id) {
     const session = sessions.find((item) => item.id === id);
-    if (session) onUpdate(id, { completed: !session.completed });
+    if (session) onUpdate(id, { completed: !session.completed, completedAt: session.completed ? "" : new Date().toISOString() });
   }
   const sorted = [...sessions].sort((a, b) => a.date.localeCompare(b.date) || a.start.localeCompare(b.start));
   const todaySessions = sorted.filter((s) => s.date === today() && !s.completed); const upcoming = sorted.filter((s) => s.date > today() && !s.completed); const completed = sorted.filter((s) => s.completed);
@@ -1238,6 +1508,7 @@ function ScheduleForm({ lectures, initial, timeFormatPreference, onPreferenceCha
     onSave({ ...form, start: parsedTimes.start, end: parsedTimes.end });
   }
   return <form className="panel form-panel" onSubmit={submit}><div className="panel-heading"><div><p className="eyebrow">{initial?.id ? "UPDATE SESSION" : "MAKE TIME TO STUDY"}</p><h2>{initial?.id ? "Edit session" : "Add study session"}</h2></div></div><div className="form-grid"><label>Subject<input list="subjects" required value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="e.g. Microbiology" /><datalist id="subjects">{[...new Set(lectures.map((l) => l.subject))].map((s) => <option key={s} value={s} />)}</datalist></label><label>Lecture or topic<input list="topics" required value={form.topic} onChange={(e) => set("topic", e.target.value)} placeholder="What will you study?" /><datalist id="topics">{lectures.map((l) => <option key={l.id} value={l.title} />)}</datalist></label><label>Date<input required type="date" value={form.date} onChange={(e) => set("date", e.target.value)} /></label><div className="time-fields"><div className="schedule-time-format"><label htmlFor="schedule-time-format-select">Time Format</label><Select value={timeFormat} onValueChange={changeFormat}><SelectTrigger id="schedule-time-format-select" aria-label="Time Format" className="schedule-format-trigger"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="12h">12-hour (AM/PM)</SelectItem><SelectItem value="24h">24-hour</SelectItem></SelectContent></Select></div>{timeField("start", "Start")}{timeField("end", "End")}</div><label className="wide">Notes <textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} rows="2" placeholder="Optional reminders for your session" /></label></div><div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>Cancel</button><button className="button primary" disabled={!parsedTimes.start || !parsedTimes.end || parsedTimes.end <= parsedTimes.start}>{initial?.id ? "Save changes" : "Add to schedule"}</button></div></form>;
+}
 }
 function ScheduleGroup({ title, date, sessions, onEdit, onDelete, onToggle }) { return <section className="schedule-group"><div className="schedule-group-heading"><div><p className="eyebrow">{title}</p>{date && <h2>{date}</h2>}</div><span>{sessions.length} {sessions.length === 1 ? "session" : "sessions"}</span></div>{sessions.length ? sessions.map((s) => <article className={`panel session-card ${s.completed ? "session-done" : ""}`} key={s.id}><div className="session-time"><strong>{fmtTime(s.start)}</strong><span>{fmtTime(s.end)}</span></div><div className="session-info"><div className="session-header"><span className="subject-label">{s.subject}</span><span className={`status ${s.completed ? "complete" : "upcoming"}`}>{s.completed ? "Completed" : s.date === today() && new Date().toTimeString().slice(0, 5) >= s.start && new Date().toTimeString().slice(0, 5) <= s.end ? "In progress" : "Upcoming"}</span></div><h3>{s.topic}</h3>{s.notes && <p>{s.notes}</p>}{s.date !== today() && <small>{fmtDate(s.date)}</small>}<div className="session-actions"><button className="text-button" onClick={() => onToggle(s.id)}>{s.completed ? "↶ Mark upcoming" : "✓ Mark complete"}</button><button className="text-button" onClick={() => onEdit(s)}>Edit</button><button className="text-button delete-text" onClick={() => onDelete(s.id)}>Delete</button></div></div></article>) : <div className="panel schedule-empty"><span>◷</span><p>Nothing scheduled here yet.</p></div>}</section>; }
 
@@ -1386,75 +1657,96 @@ function QuizOptions({ lecture, onStart, onBack, isGenerating, error }) {
   const [count, setCount] = useState(5);
   const [type, setType] = useState("Multiple choice");
   const [includeExplanations, setIncludeExplanations] = useState(true);
+  const [mode, setMode] = useState("practice");
+  const [durationMinutes, setDurationMinutes] = useState(30);
+  const [passingScore, setPassingScore] = useState(70);
   const [customizing, setCustomizing] = useState(false);
-  const settings = { difficulty, count, type, includeExplanations };
+  const settings = { difficulty, count, type, includeExplanations, mode, durationMinutes, passingScore };
   return <>
-    <button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button>
+    <button className="back-link" onClick={onBack}>← &nbsp;Back to Quiz Center</button>
     <section className="panel quiz-options-panel">
-      <p className="eyebrow">GENERATE A QUIZ · {lecture.subject}</p>
-      <h1>{lecture.title}</h1>
-      <p className="subheading">Start right away with five medium-difficulty multiple-choice questions, or optionally choose your settings.</p>
-      <button className="button primary quiz-generate-now" disabled={isGenerating} onClick={() => onStart(DEFAULT_QUIZ_SETTINGS)}>
-        {isGenerating ? "Generating your quiz…" : "Generate Quiz Now"}
-      </button>
-      <button type="button" className="quiz-customize-toggle" aria-expanded={customizing} onClick={() => setCustomizing((open) => !open)}>
-        {customizing ? "Hide customization ▲" : "Customize Quiz ▼"}
-      </button>
-      {customizing && <div className="quiz-custom-panel">
-        <div className="quiz-settings-grid">
-          <label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option>Easy</option><option>Medium</option><option>Hard</option></select><small>{difficulty === "Easy" ? "Recall key terms and definitions." : difficulty === "Hard" ? "Analyze and apply related ideas." : "Explain concepts and connect ideas."}</small></label>
-          <label>Questions<select value={count} onChange={(event) => setCount(Number(event.target.value))}><option value="5">5 questions</option><option value="10">10 questions</option><option value="15">15 questions</option><option value="20">20 questions</option></select></label>
-          <label>Question type<select value={type} onChange={(event) => setType(event.target.value)}><option>Multiple choice</option><option>True / False</option><option>Mixed</option><option>Multi-select</option><option>Problem solving</option></select><small>Every question is grounded in the selected lecture.</small></label>
-        </div>
-        <label className="quiz-explanation-setting"><input type="checkbox" checked={includeExplanations} onChange={(event) => setIncludeExplanations(event.target.checked)} /> Include short explanations for correct answers</label>
-        <div className="form-actions"><button className="button primary" disabled={isGenerating} onClick={() => onStart(settings)}>{isGenerating ? "Generating your quiz…" : "Generate Customized Quiz"}</button></div>
-      </div>}
-      {isGenerating && <p className="quiz-generation-status" role="status">Generating your quiz from the lecture content…</p>}
-      {error && <p className="quiz-setup-message" role="alert">{error}</p>}
+      <p className="eyebrow">GENERATE A QUIZ · {lecture.subject}</p><h1>{lecture.title}</h1>
+      <p className="subheading">Start with five medium multiple-choice questions, or customize your practice or exam.</p>
+      <button className="button primary quiz-generate-now" disabled={isGenerating} onClick={() => onStart(DEFAULT_QUIZ_SETTINGS)}>{isGenerating ? "Generating your quiz..." : "Generate Quiz Now"}</button>
+      <button type="button" className="quiz-customize-toggle" aria-expanded={customizing} onClick={() => setCustomizing((open) => !open)}>{customizing ? "Hide customization" : "Customize quiz"}</button>
+      {customizing && <div className="quiz-custom-panel"><div className="quiz-settings-grid">
+        <label>Difficulty<select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option>Easy</option><option>Medium</option><option>Hard</option></select><small>{difficulty === "Easy" ? "Recall key terms and definitions." : difficulty === "Hard" ? "Analyze and apply related ideas." : "Explain concepts and connect ideas."}</small></label>
+        <label>Questions<select value={count} onChange={(event) => setCount(Number(event.target.value))}><option value="5">5 questions</option><option value="10">10 questions</option><option value="15">15 questions</option><option value="20">20 questions</option></select></label>
+        <label>Question type<select value={type} onChange={(event) => setType(event.target.value)}><option>Multiple choice</option><option>True / False</option><option>Identification</option><option>Matching</option><option>Mixed</option><option>Multi-select</option><option>Problem solving</option></select><small>Generated questions use the selected lecture source.</small></label>
+        <label>Quiz mode<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="practice">Practice · feedback after each answer</option><option value="exam">Examination · feedback after submission</option></select><small>Examination mode hides answers until submission.</small></label>
+        {mode === "exam" && <label>Time limit<select value={durationMinutes} onChange={(event) => setDurationMinutes(Number(event.target.value))}>{[10, 20, 30, 45, 60, 90, 120].map((minutes) => <option value={minutes} key={minutes}>{minutes} minutes</option>)}</select></label>}
+        {mode === "exam" && <label>Passing score<select value={passingScore} onChange={(event) => setPassingScore(Number(event.target.value))}>{[50, 60, 70, 75, 80, 90, 100].map((score) => <option value={score} key={score}>{score}%</option>)}</select></label>}
+      </div><label className="quiz-explanation-setting"><input type="checkbox" checked={includeExplanations} onChange={(event) => setIncludeExplanations(event.target.checked)} /> Include answer explanations</label><div className="form-actions"><button className="button primary" disabled={isGenerating} onClick={() => onStart(settings)}>{isGenerating ? "Generating your quiz..." : mode === "exam" ? "Start examination" : "Generate customized quiz"}</button></div></div>}
+      {isGenerating && <p className="quiz-generation-status" role="status">Generating questions from the lecture content...</p>}{error && <p className="quiz-setup-message" role="alert">{error}</p>}
     </section>
   </>;
 }
 
 function QuizRun({ state, lecture, onChange, onFinish, onRetry, onReview, onBack }) {
+  const [clockNow, setClockNow] = useState(Date.now());
+  const timedExam = state.config?.mode === "exam" && !state.done;
+  const examDuration = (state.config?.durationMinutes || 30) * 60;
+  const examRemaining = Math.max(0, examDuration - Math.floor((clockNow - state.startedAt) / 1000));
+  const timeoutSubmitted = useRef(false);
+  useEffect(() => { timeoutSubmitted.current = false; }, [state.startedAt]);
+  useEffect(() => { if (!timedExam) return undefined; const timer = window.setInterval(() => setClockNow(Date.now()), 1000); return () => window.clearInterval(timer); }, [timedExam]);
+  useEffect(() => { if (timedExam && examRemaining <= 0 && !timeoutSubmitted.current) { timeoutSubmitted.current = true; onFinish(state.answers); } }, [timedExam, examRemaining]);
   const index = state.index;
   const question = state.questions[index];
-  const selected = state.answers[index] || "";
+  const selected = state.answers[index] ?? "";
   const submitted = Boolean(state.submitted[index]);
+  const isExam = state.config?.mode === "exam";
+  const isMatching = question.type === "Matching";
+  const matchingOptions = useMemo(() => shuffleArray((question.pairs || []).map((pair) => pair.right)), [question]);
+  const isAnswered = question.type === "Identification"
+    ? typeof selected === "string" && Boolean(selected.trim())
+    : isMatching
+      ? (question.pairs || []).every((pair) => selected?.[pair.left])
+      : Array.isArray(selected) ? selected.length > 0 : Boolean(selected);
   const isCorrect = answerMatches(question, selected);
-  const progress = getQuizProgress(state.submitted, state.questions.length);
+  const hasAnswer = (item, answer) => item.type === "Identification"
+    ? typeof answer === "string" && Boolean(answer.trim())
+    : item.type === "Matching"
+      ? (item.pairs || []).every((pair) => answer?.[pair.left])
+      : Array.isArray(answer) ? answer.length > 0 : Boolean(answer);
+  const answeredCount = state.questions.filter((item, questionIndex) => hasAnswer(item, state.answers[questionIndex])).length;
+  const progress = isExam ? percent(answeredCount, state.questions.length) : getQuizProgress(state.submitted, state.questions.length);
   const elapsed = Math.max(0, Math.round((Date.now() - state.startedAt) / 1000));
   function update(changes) { onChange((current) => ({ ...current, ...changes })); }
+  function saveAnswer(value) { update({ answers: { ...state.answers, [index]: value } }); }
   function choose(option) {
     if (submitted) return;
     const value = question.type === "Multi-select"
-      ? (Array.isArray(selected) ? selected : []).includes(option)
-        ? selected.filter((item) => item !== option)
-        : [...(Array.isArray(selected) ? selected : []), option]
+      ? (Array.isArray(selected) ? selected : []).includes(option) ? selected.filter((item) => item !== option) : [...(Array.isArray(selected) ? selected : []), option]
       : option;
-    update({ answers: { ...state.answers, [index]: value } });
-  }
-  function submitCurrent() {
-    if (!selected || (Array.isArray(selected) && !selected.length)) return;
-    if (submitted) {
-      if (index === state.questions.length - 1) onFinish(state.answers);
-      return;
-    }
-    update({ submitted: { ...state.submitted, [index]: true } });
+    saveAnswer(value);
   }
   function previous() { update({ index: getQuizQuestionIndex(index, -1, state.questions.length) }); }
   function next() { update({ index: getQuizQuestionIndex(index, 1, state.questions.length) }); }
+  function submitCurrent() {
+    if (isExam) {
+      if (index === state.questions.length - 1) { if (window.confirm("Submit the examination now? Answers will be scored and revealed.")) onFinish(state.answers); }
+      else next();
+      return;
+    }
+    if (!isAnswered) return;
+    if (submitted) { if (index === state.questions.length - 1) onFinish(state.answers); return; }
+    update({ submitted: { ...state.submitted, [index]: true } });
+  }
   if (state.done) {
-    const mistakes = state.questions.filter((item, i) => !answerMatches(item, state.answers[i])).length;
+    const mistakes = state.questions.filter((item, questionIndex) => !answerMatches(item, state.answers[questionIndex])).length;
     const seconds = state.attempt?.seconds || elapsed;
     const scorePct = percent(state.score, state.questions.length);
-    return <><button className="back-link" onClick={onBack}>← &nbsp;Back to quizzes</button><section className="panel quiz-wrap quiz-result"><div className="quiz-success">{scorePct >= 70 ? "✓" : "↗"}</div><p className="eyebrow">QUIZ RESULTS · {state.config?.difficulty || "Medium"}</p><h1>{scorePct >= 80 ? "Excellent work!" : scorePct >= 60 ? "Good progress—keep practicing." : "A good starting point for review."}</h1><p className="subheading">{lecture.title}</p><div className="score-circle"><strong>{scorePct}%</strong><span>score</span></div><div className="score-details"><div><strong>{state.score}</strong><span>Correct</span></div><div><strong>{mistakes}</strong><span>Incorrect</span></div><div><strong>{Math.floor(seconds / 60)}m {seconds % 60}s</strong><span>Time</span></div></div>{scorePct < 60 && <p className="quiz-low-score">Review this topic before your next attempt to strengthen your mastery.</p>}<div className="quiz-result-actions">{mistakes > 0 && <button className="button secondary" onClick={onReview}>Review mistakes</button>}<button className="button primary" onClick={onRetry}>↻ Try again</button><button className="button secondary" onClick={onBack}>Back to quizzes</button></div></section></>;
+    const passed = scorePct >= (state.config?.passingScore || 70);
+    return <><button className="back-link" onClick={onBack}>← &nbsp;Back to Quiz Center</button><section className="panel quiz-wrap quiz-result"><div className="quiz-success">{passed ? "✓" : "↗"}</div><p className="eyebrow">{isExam ? `EXAM RESULTS · PASSING ${state.config?.passingScore || 70}%` : `QUIZ RESULTS · ${state.config?.difficulty || "Medium"}`}</p><h1>{isExam ? passed ? "You passed the examination." : "Keep practicing and try again." : scorePct >= 80 ? "Excellent work!" : scorePct >= 60 ? "Good progress. Keep practicing." : "A good starting point for review."}</h1><p className="subheading">{lecture.title}</p><div className="score-circle"><strong>{scorePct}%</strong><span>{isExam ? passed ? "passed" : "not passed" : "score"}</span></div><div className="score-details"><div><strong>{state.score}</strong><span>Correct</span></div><div><strong>{mistakes}</strong><span>Incorrect</span></div><div><strong>{Math.floor(seconds / 60)}m {seconds % 60}s</strong><span>Time</span></div></div>{isExam && <p className="quiz-low-score">Passing score: {state.config?.passingScore || 70}%</p>}{scorePct < 60 && <p className="quiz-low-score">Review this topic before your next attempt to strengthen your mastery.</p>}<div className="quiz-result-actions">{mistakes > 0 && <button className="button secondary" onClick={onReview}>Review mistakes</button>}<button className="button primary" onClick={onRetry}>Try again</button><button className="button secondary" onClick={onBack}>Back to Quiz Center</button></div></section></>;
   }
-  return <><button className="back-link" onClick={() => { if (window.confirm("Leave this quiz? Your current answers will be lost.")) onBack(); }}>← &nbsp;Exit quiz</button><section className="panel quiz-wrap quiz-run-panel"><div className="quiz-top"><div><p className="eyebrow">{lecture.subject} · {state.config?.difficulty || "Medium"}</p><h1>{lecture.title}</h1></div><span className="quiz-counter">{String(index + 1).padStart(2, "0")} / {String(state.questions.length).padStart(2, "0")}</span></div><div className="quiz-progress-track"><span style={{ width: `${Math.max(5, progress)}%` }} /></div><div className="quiz-run-content"><p className="question-label">QUESTION {index + 1} · {question.type || state.config?.type || "Multiple choice"}</p><h2 className="quiz-question">{question.question}</h2><div className="quiz-options">{question.options.map((option, choiceIndex) => { const isSelected = Array.isArray(selected) ? selected.includes(option) : selected === option; const isRight = Array.isArray(question.correctAnswer) ? question.correctAnswer.includes(option) : question.correctAnswer === option; return <button key={`${option}-${choiceIndex}`} type="button" className={`quiz-option ${isSelected ? "selected" : ""} ${submitted && isRight ? "correct" : ""} ${submitted && isSelected && !isRight ? "incorrect" : ""}`} disabled={submitted} aria-pressed={isSelected} onClick={() => choose(option)}><span className="quiz-choice-letter">{String.fromCharCode(65 + choiceIndex)}</span><span className="quiz-option-text">{option}</span>{submitted && isRight && <span className="quiz-option-mark">✓</span>}</button>; })}</div>{!submitted && <div className="quiz-hint-area"><button className="text-button" type="button" onClick={() => update({ hints: { ...state.hints, [index]: true } })}>Show hint</button>{state.hints[index] && <p className="quiz-hint">{question.hint}</p>}</div>}{submitted && <div className={`quiz-feedback ${isCorrect ? "is-correct" : "is-incorrect"}`} role="status"><strong>{isCorrect ? "That’s right." : `Not quite. The answer is: ${answerText(question.correctAnswer)}`}</strong>{question.explanation && <p>{question.explanation}</p>}</div>}</div><div className="quiz-run-footer"><span>{index + 1} of {state.questions.length} questions</span><div><button className="button secondary" onClick={previous} disabled={index === 0}>← Previous</button>{submitted && index < state.questions.length - 1 ? <button className="button primary" onClick={next}>Next question →</button> : <button className="button primary" onClick={submitCurrent} disabled={!selected || (Array.isArray(selected) && !selected.length)}>{submitted ? "Finish quiz" : "Submit answer"}</button>}</div></div></section></>;
+  return <><button className="back-link" onClick={() => { if (window.confirm("Leave this quiz? Your current answers will be lost.")) onBack(); }}>← &nbsp;Exit quiz</button><section className="panel quiz-wrap quiz-run-panel"><div className="quiz-top"><div><p className="eyebrow">{lecture.subject} · {state.config?.difficulty || "Medium"}{isExam ? " · Examination" : ""}</p><h1>{lecture.title}</h1></div><div className="quiz-run-status"><span className="quiz-counter">{String(index + 1).padStart(2, "0")} / {String(state.questions.length).padStart(2, "0")}</span>{timedExam && <strong className={`exam-countdown${examRemaining < 60 ? " urgent" : ""}`} role="timer" aria-label="Time remaining">{String(Math.floor(examRemaining / 60)).padStart(2, "0")}:{String(examRemaining % 60).padStart(2, "0")}</strong>}</div></div><div className="quiz-progress-track"><span style={{ width: `${Math.max(5, progress)}%` }} /></div><div className="quiz-run-content"><p className="question-label">QUESTION {index + 1} · {question.type || state.config?.type || "Multiple choice"}</p><h2 className="quiz-question">{question.question}</h2>
+{question.type === "Identification" ? <label className="identification-answer-field">Your answer<input type="text" value={selected} disabled={submitted} onChange={(event) => saveAnswer(event.target.value)} placeholder="Type a short answer" autoComplete="off" /></label> : isMatching ? <div className="matching-pairs">{question.pairs.map((pair) => <label className="matching-pair" key={pair.left}><strong>{pair.left}</strong><select value={selected[pair.left] || ""} disabled={submitted} onChange={(event) => saveAnswer({ ...selected, [pair.left]: event.target.value })}><option value="">Choose a match</option>{matchingOptions.map((option) => <option key={option} value={option} disabled={Object.entries(selected).some(([left, right]) => left !== pair.left && right === option)}>{option}</option>)}</select></label>)}</div> : <div className="quiz-options">{question.options.map((option, choiceIndex) => { const isSelected = Array.isArray(selected) ? selected.includes(option) : selected === option; const isRight = Array.isArray(question.correctAnswer) ? question.correctAnswer.includes(option) : question.correctAnswer === option; return <button key={`${option}-${choiceIndex}`} type="button" className={`quiz-option ${isSelected ? "selected" : ""} ${submitted && isRight ? "correct" : ""} ${submitted && isSelected && !isRight ? "incorrect" : ""}`} disabled={submitted} aria-pressed={isSelected} onClick={() => choose(option)}><span className="quiz-choice-letter">{String.fromCharCode(65 + choiceIndex)}</span><span className="quiz-option-text">{option}</span>{submitted && isRight && <span className="quiz-option-mark">✓</span>}</button>; })}</div>}
+{!submitted && !isExam && <div className="quiz-hint-area"><button className="text-button" type="button" onClick={() => update({ hints: { ...state.hints, [index]: true } })}>Show hint</button>{state.hints[index] && <p className="quiz-hint">{question.hint}</p>}</div>}{submitted && !isExam && <div className={`quiz-feedback ${isCorrect ? "is-correct" : "is-incorrect"}`} role="status"><strong>{isCorrect ? "That's right." : `Not quite. The answer is: ${answerText(question.correctAnswer)}`}</strong>{question.explanation && <p>{question.explanation}</p>}</div>}{isExam && <p className="exam-instructions">Answers and explanations stay hidden until you submit the examination.</p>}</div><div className="quiz-run-footer"><span>{index + 1} of {state.questions.length} questions{isExam ? ` · ${answeredCount} answered` : ""}</span><div><button className="button secondary" onClick={previous} disabled={index === 0}>← Previous</button>{isExam ? <button className="button primary" onClick={submitCurrent}>{index === state.questions.length - 1 ? "Submit examination" : "Next question →"}</button> : submitted && index < state.questions.length - 1 ? <button className="button primary" onClick={next}>Next question →</button> : <button className="button primary" onClick={submitCurrent} disabled={!isAnswered}>{submitted ? "Finish quiz" : "Submit answer"}</button>}</div></div></section></>;
 }
-
-function QuizReview({ state, lecture, onStudy, onRetry, onBack }) {
+function QuizReview({ state, lecture, onStudy, onRetry, onRetryIncorrect, onBack }) {
   const mistakes = state.questions.map((question, index) => ({ question, index })).filter(({ question, index }) => !answerMatches(question, state.answers[index]));
-  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to results</button><section className="quiz-review"><PageHeading eyebrow="LEARN FROM MISSES" title="Review mistakes" subtitle={`${mistakes.length} question${mistakes.length === 1 ? "" : "s"} to revisit in ${lecture.title}.`} />{mistakes.map(({ question, index }) => <article className="panel quiz-review-card" key={question.id}><p className="question-label">QUESTION {index + 1} · {question.topic}</p><h2>{question.question}</h2><p><span>Your answer</span><strong>{answerText(state.answers[index])}</strong></p><p><span>Correct answer</span><strong>{answerText(question.correctAnswer)}</strong></p>{question.explanation && <p className="quiz-review-explanation">{question.explanation}</p>}<button className="text-button" onClick={onStudy}>Study this topic →</button></article>)}{!mistakes.length && <div className="panel"><p>No mistakes to review. Nice work!</p></div>}<div className="quiz-result-actions"><button className="button primary" onClick={onRetry}>Try again</button><button className="button secondary" onClick={onStudy}>Back to lesson</button></div></section></>;
+  return <><button className="back-link" onClick={onBack}>← &nbsp;Back to results</button><section className="quiz-review"><PageHeading eyebrow="LEARN FROM MISSES" title="Review mistakes" subtitle={`${mistakes.length} question${mistakes.length === 1 ? "" : "s"} to revisit in ${lecture.title}.`} />{mistakes.map(({ question, index }) => <article className="panel quiz-review-card" key={question.id}><p className="question-label">QUESTION {index + 1} · {question.topic}</p><h2>{question.question}</h2><p><span>Your answer</span><strong>{answerText(state.answers[index])}</strong></p><p><span>Correct answer</span><strong>{answerText(question.correctAnswer)}</strong></p>{question.explanation && <p className="quiz-review-explanation">{question.explanation}</p>}<button className="text-button" onClick={onStudy}>Study this topic →</button></article>)}{!mistakes.length && <div className="panel"><p>No mistakes to review. Nice work!</p></div>}<div className="quiz-result-actions">{mistakes.length > 0 && <button className="button secondary" onClick={onRetryIncorrect}>Retry incorrect questions</button>}<button className="button primary" onClick={onRetry}>Try again</button><button className="button secondary" onClick={onStudy}>Back to lesson</button></div></section></>;
 }
 
 function QuizHistory({ attempts, lectures, savedQuizzes, onQuiz, onCustomizeSettings, onEditQuestions, onOpenSaved, generatingLectureId, error }) {

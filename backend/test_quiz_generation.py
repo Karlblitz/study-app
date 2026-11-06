@@ -2,6 +2,7 @@ import json
 import unittest
 
 from quiz_generation import build_quiz_prompt, parse_quiz_response, validate_quiz_request
+from server import GeminiHandler
 
 
 def request_settings(**overrides):
@@ -101,6 +102,58 @@ class QuizGenerationTests(unittest.TestCase):
         questions[0]["explanation"] = "Model supplied explanation."
         parsed = parse_quiz_response(json.dumps({"questions": questions}), request)
         self.assertEqual(parsed[0]["explanation"], "")
+
+    def test_parses_identification_questions(self):
+        request = request_settings(type="Identification")
+        questions = [{
+            "question": f"Name process {index}.",
+            "options": [],
+            "correctAnswer": f"Process {index}",
+            "type": "Identification",
+            "hint": "Recall the source definition.",
+            "explanation": "The source names this process.",
+        } for index in range(5)]
+        parsed = parse_quiz_response(json.dumps({"questions": questions}), request)
+        self.assertEqual(parsed[0]["correctAnswer"], "Process 0")
+        self.assertEqual(parsed[0]["options"], [])
+
+    def test_parses_matching_questions_and_rejects_invalid_key(self):
+        request = request_settings(type="Matching")
+        questions = [{
+            "question": f"Match the terms in set {index}.",
+            "options": [],
+            "pairs": [{"left": "Term A", "right": "Definition A"}, {"left": "Term B", "right": "Definition B"}],
+            "correctAnswer": {"Term A": "Definition A", "Term B": "Definition B"},
+            "type": "Matching",
+            "hint": "Recall the relationships in the source.",
+            "explanation": "Each term is paired with its source definition.",
+        } for index in range(5)]
+        parsed = parse_quiz_response(json.dumps({"questions": questions}), request)
+        self.assertEqual(parsed[0]["pairs"], questions[0]["pairs"])
+        questions[0]["correctAnswer"] = {"Term A": "Definition A", "Term B": "Definition A"}
+        with self.assertRaisesRegex(ValueError, "matching key"):
+            parse_quiz_response(json.dumps({"questions": questions}), request)
+
+    def test_assistant_validates_identification_questions(self):
+        items = [{
+            "question": "Which pigment absorbs light for photosynthesis?",
+            "options": [],
+            "correctAnswer": "Chlorophyll",
+            "type": "Identification",
+            "hint": "Look for the green pigment named in the source.",
+            "explanation": "The source says chlorophyll absorbs light.",
+        }]
+        parsed = GeminiHandler._parse_assistant_items(
+            json.dumps({"questions": items}), "quiz", "Identification"
+        )
+        self.assertEqual(parsed["questions"][0]["correctAnswer"], "Chlorophyll")
+        self.assertEqual(parsed["questions"][0]["type"], "Identification")
+
+        items[0]["options"] = ["Chlorophyll"]
+        with self.assertRaisesRegex(ValueError, "no choices"):
+            GeminiHandler._parse_assistant_items(
+                json.dumps({"questions": items}), "quiz", "Identification"
+            )
 
 
 if __name__ == "__main__":

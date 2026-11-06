@@ -5,13 +5,16 @@ Studyspace is a responsive React app for organizing lecture materials, planning 
 ## Features
 
 - **Dashboard:** review study progress, today’s sessions, upcoming sessions, and shortcuts.
-- **Lecture library:** add and filter lectures with descriptions, notes, transcripts, and supported study files.
+- **Learning materials:** upload PDF, DOCX, PPTX, text, and small video files; add YouTube links and notes; organize by subject, module, chapter, and topic; search, bookmark, edit, and delete materials.
 - **Lecture viewer:** view PDFs and extracted text, play supported saved video files, and embed YouTube videos. The viewer includes preview-size controls.
-- **AI study tools (optional):** use Gemini to summarize lecture notes and generate quizzes grounded in lecture content.
+- **AI study assistant (optional):** use Gemini to answer questions, explain concepts, summarize materials, and generate multiple-choice or identification questions and flashcards grounded in a selected lecture.
 - **Study checklist:** mark lectures as studied and group them by subject.
-- **Study schedule:** add, edit, delete, and complete study sessions.
-- **Quizzes:** generate a default five-question quiz immediately, optionally customize the question count, type, difficulty, and explanations, reopen saved quizzes, review mistakes, and view attempt history.
-- **Progress dashboard:** track completed lectures, quiz averages, personal bests, and subject or topic progress.
+- **Study planner:** view tasks and sessions by day, week, or month; create, edit, and complete prioritized deadlines and recurring tasks; get in-app reminders for study sessions and tasks due soon.
+- **Quizzes:** practice multiple choice, true/false, identification, and matching; configure timed examination mode, passing scores, and answer feedback; reopen saved quizzes, retake mistakes, and review attempt history.
+- **Flashcards:** create subject decks, add text or image links, and review cards with spaced repetition.
+- **Focus timer:** customize focus and break lengths, set a daily goal, and review saved focus sessions.
+- **Analytics and achievements:** review quiz trends, subject progress, study time, streaks, XP, and personal milestones.
+- **Settings:** manage your profile, appearance, time format, and study preferences.
 - **Math summaries:** render inline equations in generated summaries.
 - **Responsive layout:** the main study tools reflow for narrow mobile screens and wide desktop screens.
 - **Sign-in screen:** Firebase Email/Password and Google sign-in.
@@ -22,7 +25,7 @@ Studyspace is a responsive React app for organizing lecture materials, planning 
 - A modern browser
 - Optional for Gemini summaries and AI quiz generation: Python 3 and a Gemini API key
 
-The frontend uses React and Vite, along with PDF.js, Mammoth, JSZip, and KaTeX. Gemini features use a local Python service. Saved quizzes, manual question editing, and other app features remain available without Python or an API key.
+The frontend uses React and Vite, along with PDF.js, Mammoth, JSZip, and KaTeX. AI features use a local Python service. The library, planner, flashcards, timer, quizzes, and analytics remain available without Python or an API key.
 
 ## Run the app
 
@@ -42,7 +45,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-## Optional: enable Gemini summaries and quiz generation
+## Optional: enable Gemini study tools
 
 1. Create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey). Keep the key private.
 2. Open a **second** PowerShell window in the `Study-App` folder. Create a virtual environment and install the Python dependencies:
@@ -59,9 +62,9 @@ npm.cmd run dev
    .\.venv\Scripts\python.exe backend\server.py
    ```
 
-4. Keep the Python service running while you use **Summarize notes** or **Generate Quiz Now**. The Vite dev server should also remain running in its own terminal.
+4. Keep the Python service running while you use **Summarize notes**, quiz generation, or the **AI Study Assistant**. The Vite dev server should also remain running in its own terminal.
 
-The API key is read by the Python service and should not be added to React code, a `VITE_` variable, or a committed file. The service uses the `google-genai` Python SDK and defaults to the `gemini-3.5-flash-lite` model; you can override the model by setting `GEMINI_MODEL` before starting the service. Quiz generation sends lecture text and the selected settings to `/api/generate-quiz`, validates the response, and saves the complete question set to the signed-in user's Firestore `quizzes` collection.
+The API key is read by the Python service and should not be added to React code, a `VITE_` variable, or a committed file. The service uses the `google-genai` Python SDK and defaults to the `gemini-3.5-flash-lite` model; you can override the model by setting `GEMINI_MODEL` before starting the service. Quiz generation sends lecture text and settings to `/api/generate-quiz`; the study assistant sends only the selected material and requested study task to `/api/study-assistant`. Generated responses are checked before they are saved to your signed-in account.
 
 If the Python service or Gemini is unavailable, quiz generation shows an error and does not launch an incomplete quiz. Reopen previously saved quizzes from the **Saved quizzes** section without another generation request.
 
@@ -84,7 +87,7 @@ Files up to 3 MB can be retained for an in-app preview. Larger non-video documen
 
 Copy `.env.example` to `.env.local`, fill in the Firebase Web App configuration values, and restart Vite. In Firebase Console, enable Email/Password and Google under **Authentication → Sign-in method**, create a Firestore database, and publish [firestore.rules](./firestore.rules). The frontend uses Firebase's modular JavaScript SDK; no Admin SDK or service-account key belongs in the browser.
 
-Data is stored at `users/{uid}/lectures/{lectureId}`, `users/{uid}/sessions/{sessionId}`, `users/{uid}/quizzes/{quizId}`, `users/{uid}/quizAttempts/{attemptId}`, and `users/{uid}/profile/preferences`. Checklist completion is the `studied` field on each lecture; dashboard and progress summaries are calculated from the lectures and quiz attempts. Firestore listeners keep the UI current when the signed-in user's data changes.
+Data is stored in UID-scoped collections under `users/{uid}`: `lectures`, `sessions`, `quizzes`, `quizAttempts`, `plannerTasks`, `flashcards`, `focusSessions`, and `achievements`; profile preferences use `users/{uid}/profile/preferences`. Checklist completion is the `studied` field on each material. Analytics are calculated from saved materials, attempts, completed sessions, and focus sessions. Firestore listeners keep the UI current when the signed-in user's data changes. The existing wildcard Firestore rule already covers these collections, so no migration or rule change is required; publish the rules before using the app.
 
 Uploaded file names and types, extracted lecture text, and manually edited question banks are stored with the lecture. Generated quiz records include the complete configured questions, answer choices, answers, hints, and explanations in the user's `quizzes` collection. Original file bytes are not uploaded to Firestore: local preview data remains on the current browser/device, so reattach a file on another device if you need to preview or download it there. Existing local account and study-data entries are left untouched and are not automatically imported into Firebase. Legacy local accounts must register again with Firebase Authentication.
 

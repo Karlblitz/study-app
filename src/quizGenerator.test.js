@@ -82,13 +82,37 @@ test("quick quiz settings default to five medium multiple-choice questions with 
     count: 5,
     type: "Multiple choice",
     includeExplanations: true,
+    mode: "practice",
+    durationMinutes: 30,
+    passingScore: 70,
   });
   assert.deepEqual(DEFAULT_QUIZ_SETTINGS, {
     difficulty: "Medium",
     count: 5,
     type: "Multiple choice",
     includeExplanations: true,
+    mode: "practice",
+    durationMinutes: 30,
+    passingScore: 70,
   });
+});
+
+test("validates timed examination settings", () => {
+  assert.deepEqual(validateQuizSettings({ ...DEFAULT_QUIZ_SETTINGS, mode: "exam", durationMinutes: 45, passingScore: 80 }), {
+    difficulty: "Medium", count: 5, type: "Multiple choice", includeExplanations: true,
+    mode: "exam", durationMinutes: 45, passingScore: 80,
+  });
+  assert.throws(() => validateQuizSettings({ ...DEFAULT_QUIZ_SETTINGS, mode: "exam", durationMinutes: 2 }), /5 to 120 minutes/);
+});
+
+test("scores identification and matching questions", () => {
+  const questions = [
+    { id: "identify", type: "Identification", question: "Name the process.", options: [], correctAnswer: "Photosynthesis" },
+    { id: "match", type: "Matching", question: "Match each term.", options: [], pairs: [{ left: "Chlorophyll", right: "Absorbs light" }, { left: "Glucose", right: "Stores chemical energy" }], correctAnswer: { Chlorophyll: "Absorbs light", Glucose: "Stores chemical energy" } },
+  ];
+  const answers = { 0: " photosynthesis ", 1: { Chlorophyll: "Absorbs light", Glucose: "Stores chemical energy" } };
+  assert.equal(scoreQuizQuestions(questions, answers), 2);
+  assert.equal(scoreQuizQuestions(questions, { 0: "glucose", 1: { Chlorophyll: "Stores chemical energy" } }), 0);
 });
 
 test("validates complete customized quiz sets and preserves selected settings", () => {

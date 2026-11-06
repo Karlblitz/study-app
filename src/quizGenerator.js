@@ -5,9 +5,12 @@ export const DEFAULT_QUIZ_SETTINGS = Object.freeze({
   count: 5,
   type: "Multiple choice",
   includeExplanations: true,
+  mode: "practice",
+  durationMinutes: 30,
+  passingScore: 70,
 });
 
-const quizQuestionTypes = new Set(["Multiple choice", "True / False", "Multi-select", "Problem solving", "Mixed"]);
+const quizQuestionTypes = new Set(["Multiple choice", "True / False", "Identification", "Matching", "Multi-select", "Problem solving", "Mixed"]);
 const quizDifficulties = new Set(["Easy", "Medium", "Hard"]);
 const quizQuestionCounts = new Set([5, 10, 15, 20]);
 
@@ -21,9 +24,28 @@ export function getUniqueValidQuestions(questions = []) {
   const seen = new Set();
   const usedIds = new Set();
   return questions.filter((item) => {
-    if (!item || typeof item.question !== "string" || !item.question.trim() || !Array.isArray(item.options)) return false;
-    const options = [...new Set(item.options.filter((option) => typeof option === "string" && option.trim()).map((option) => option.trim()))];
+    if (!item || typeof item.question !== "string" || !item.question.trim()) return false;
+    const questionType = item.type || "Multiple choice";
     const answer = item.correctAnswer ?? item.answer;
+    if (questionType === "Identification") {
+      const key = normalizedQuestion(item.question);
+      if (typeof answer !== "string" || !answer.trim() || !key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }
+    if (questionType === "Matching") {
+      const pairs = item.pairs;
+      const key = normalizedQuestion(item.question);
+      if (!Array.isArray(pairs) || pairs.length < 2 || !answer || typeof answer !== "object" || Array.isArray(answer) || !key || seen.has(key)) return false;
+      const left = pairs.map((pair) => pair?.left).filter((value) => typeof value === "string" && value.trim());
+      const right = pairs.map((pair) => pair?.right).filter((value) => typeof value === "string" && value.trim());
+      if (left.length !== pairs.length || right.length !== pairs.length || new Set(left).size !== pairs.length || new Set(right).size !== pairs.length) return false;
+      if (left.some((value) => answer[value] !== right[pairs.findIndex((pair) => pair.left === value)]) || Object.keys(answer).length !== pairs.length) return false;
+      seen.add(key);
+      return true;
+    }
+    if (!Array.isArray(item.options)) return false;
+    const options = [...new Set(item.options.filter((option) => typeof option === "string" && option.trim()).map((option) => option.trim()))];
     const validAnswer = Array.isArray(answer)
       ? answer.length > 0 && answer.every((value) => options.includes(value))
       : typeof answer === "string" && options.includes(answer.trim());
@@ -32,7 +54,7 @@ export function getUniqueValidQuestions(questions = []) {
     seen.add(key);
     return true;
   }).map((item, index) => {
-    const options = [...new Set(item.options.filter((option) => typeof option === "string" && option.trim()).map((option) => option.trim()))];
+    const options = [...new Set((item.options || []).filter((option) => typeof option === "string" && option.trim()).map((option) => option.trim()))];
     const answer = item.correctAnswer ?? item.answer;
     const baseId = typeof item.id === "string" && item.id.trim() ? item.id.trim() : `question-${index + 1}`;
     let id = baseId;
@@ -46,8 +68,8 @@ export function getUniqueValidQuestions(questions = []) {
       ...item,
       id,
       options,
-      correctAnswer: Array.isArray(answer) ? answer : answer.trim(),
-      answer: Array.isArray(answer) ? answer : answer.trim(),
+      correctAnswer: Array.isArray(answer) || (answer && typeof answer === "object") ? answer : answer.trim(),
+      answer: Array.isArray(answer) || (answer && typeof answer === "object") ? answer : answer.trim(),
     };
   });
 }
@@ -78,11 +100,25 @@ export function validateQuizSettings(settings = DEFAULT_QUIZ_SETTINGS) {
   if (typeof settings.includeExplanations !== "boolean") {
     throw new Error("Choose whether to include explanations.");
   }
+  if (!["practice", "exam"].includes(settings.mode || "practice")) {
+    throw new Error("Choose practice or examination mode.");
+  }
+  const durationMinutes = settings.durationMinutes ?? 30;
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 5 || durationMinutes > 120) {
+    throw new Error("Choose an exam time limit from 5 to 120 minutes.");
+  }
+  const passingScore = settings.passingScore ?? 70;
+  if (!Number.isInteger(passingScore) || passingScore < 50 || passingScore > 100) {
+    throw new Error("Choose a passing score from 50% to 100%.");
+  }
   return {
     count: settings.count,
     difficulty: settings.difficulty,
     type: settings.type,
     includeExplanations: settings.includeExplanations,
+    mode: settings.mode || "practice",
+    durationMinutes,
+    passingScore,
   };
 }
 
@@ -92,10 +128,10 @@ export function validateGeneratedQuiz(questions, settings) {
     throw new Error(`The generator returned fewer than the ${config.count} requested questions. Try again.`);
   }
   questions.forEach((question, index) => {
-    if (!question || !Array.isArray(question.options)) {
-      throw new Error(`Question ${index + 1} is missing its answer choices.`);
-    }
-    const options = question.options.map((option) => typeof option === "string" ? option.trim() : "");
+    if (!question || typeof question.question !== "string") throw new Error(`Question ${index + 1} is missing its prompt.`);
+    const type = question.type || config.type;
+    if (!Array.isArray(question.options) && !["Identification", "Matching"].includes(type)) throw new Error(`Question ${index + 1} is missing its answer choices.`);
+    const options = (question.options || []).map((option) => typeof option === "string" ? option.trim() : "");
     const normalizedOptions = options.map((option) => option.toLowerCase());
     if (options.some((option) => !option) || new Set(normalizedOptions).size !== options.length) {
       throw new Error(`Question ${index + 1} has empty or duplicate answer choices.`);
@@ -115,7 +151,15 @@ export function validateGeneratedQuiz(questions, settings) {
     if (config.type !== "Mixed" && type !== config.type) {
       throw new Error(`Question ${index + 1} does not match the selected question type.`);
     }
-    if (type === "Multiple choice" || type === "Problem solving" || type === "Multi-select") {
+    if (type === "Identification") {
+      if (typeof question.correctAnswer !== "string" || !question.correctAnswer.trim()) throw new Error(`Question ${index + 1} needs a correct identification answer.`);
+    } else if (type === "Matching") {
+      const pairs = question.pairs || [];
+      const answer = question.correctAnswer;
+      const left = pairs.map((pair) => pair?.left);
+      const right = pairs.map((pair) => pair?.right);
+      if (pairs.length < 2 || new Set(left).size !== pairs.length || new Set(right).size !== pairs.length || !answer || typeof answer !== "object" || Array.isArray(answer) || pairs.some((pair) => answer[pair.left] !== pair.right) || Object.keys(answer).length !== pairs.length) throw new Error(`Question ${index + 1} needs a complete matching key.`);
+    } else if (type === "Multiple choice" || type === "Problem solving" || type === "Multi-select") {
       if (question.options.length !== 4) {
         throw new Error(`Question ${index + 1} must have exactly four answer choices.`);
       }
@@ -157,7 +201,11 @@ export function scoreQuizQuestions(questions, answers) {
   return questions.reduce((score, question, index) => {
     const correct = question.correctAnswer;
     const answer = answers[index];
-    const matches = Array.isArray(correct)
+    const matches = correct && typeof correct === "object" && !Array.isArray(correct)
+      ? answer && typeof answer === "object" && !Array.isArray(answer) && Object.keys(correct).length === Object.keys(answer).length && Object.entries(correct).every(([key, value]) => answer[key] === value)
+      : question.type === "Identification"
+        ? typeof answer === "string" && answer.trim().localeCompare(correct.trim(), undefined, { sensitivity: "accent" }) === 0
+      : Array.isArray(correct)
       ? Array.isArray(answer) && correct.length === answer.length && correct.every((item) => answer.includes(item))
       : correct === answer;
     return score + (matches ? 1 : 0);
