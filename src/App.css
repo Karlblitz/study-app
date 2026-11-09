@@ -1042,3 +1042,52 @@ body{background:#151E36;color:#F4F7FB}
   .study-sidebar-footer .profile{gap:7px}
   .study-sidebar-footer .profile-dots{font-size:18px}
 }
+
+/* Keep material actions aligned inside cards at desktop and narrow widths. */
+.lecture-actions {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) repeat(5, 32px);
+  gap: 5px;
+  align-items: center;
+}
+.lecture-actions > .button {
+  min-width: 0;
+  padding-inline: 4px;
+  white-space: nowrap;
+  justify-content: center;
+  flex: initial;
+}
+.lecture-actions > .icon-button {
+  box-sizing: border-box;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (min-width: 481px) and (max-width: 768px) {
+  .lecture-actions {
+    grid-template-columns: minmax(80px, 1fr) repeat(3, 28px);
+    gap: 4px;
+  }
+  .lecture-actions > .icon-button {
+    width: 28px;
+    min-width: 28px;
+    height: 30px;
+  }
+  .lecture-actions > :nth-child(5) { grid-column: 3; }
+  .lecture-actions > :nth-child(6) { grid-column: 4; }
+}
+@media (max-width: 480px) {
+  .lecture-actions {
+    grid-template-columns: minmax(82px, 1fr) repeat(5, 28px);
+    gap: 4px;
+  }
+  .lecture-actions > .icon-button {
+    width: 28px;
+    min-width: 28px;
+    height: 30px;
+  }
+}
