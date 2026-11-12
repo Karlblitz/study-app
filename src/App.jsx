@@ -31,6 +31,17 @@ import {
   subscribeToUserRecords,
   updateUserRecord,
 } from "./firestore.js";
+import ProfileBackgroundEditor from "./components/ProfileBackgroundEditor.jsx";
+import ProfileAvatarEditor from "./components/ProfileAvatarEditor.jsx";
+import { uploadProfileAvatarToCloudinary } from "./cloudinaryAvatar.js";
+import {
+  DEFAULT_PROFILE_BACKGROUND,
+  deleteUserProfileBackground,
+  getProfileBackgroundErrorMessage,
+  getUserProfileBackgroundUrl,
+  normalizeProfileBackground,
+  uploadUserProfileBackground,
+} from "./profileBackground.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { Eye, EyeOff, FileText, FileVideo, X, Mail, LockKeyhole, ArrowRight, LoaderCircle, Star, Pencil, Trash2 } from "lucide-react";
 import { CalendarDays, Moon, Sun, Home, BookOpen, CheckSquare, ClipboardList, Brain, ChartNoAxesCombined, Sparkles, Timer, Trophy, Settings2 } from "lucide-react";
@@ -323,7 +334,9 @@ function App() {
       return;
     }
     let dataUnsubscribers = [];
+    let profileRequestVersion = 0;
     const stopAuthListener = onAuthStateChanged(auth, (user) => {
+      profileRequestVersion += 1;
       dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
       dataUnsubscribers = [];
       setLectures([]);
@@ -414,23 +427,37 @@ function App() {
             theme: "light",
             timeFormat: "12h",
             ...savedProfile,
+            profileBackground: normalizeProfileBackground(savedProfile.profileBackground),
           };
-          setProfile(nextProfile);
-          if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
+          const requestVersion = ++profileRequestVersion;
+          getUserProfileBackgroundUrl(user.uid, nextProfile.profileBackground.storagePath).then((profileBackgroundUrl) => {
+            if (requestVersion !== profileRequestVersion) return;
+            setProfile({ ...nextProfile, profileBackgroundUrl });
+            if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
+            markLoaded("profile");
+          }).catch((error) => {
+            if (requestVersion !== profileRequestVersion) return;
+            reportCloudError("Could not load your profile background", error);
+            setProfile({ ...nextProfile, profileBackgroundUrl: "" });
+            if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
+            markLoaded("profile");
+          });
         } else {
           const defaults = {
             name: user.displayName || user.email || "Student",
             email: user.email || "",
             theme: "light",
             timeFormat: "12h",
+            bio: "",
+            profileBackground: { ...DEFAULT_PROFILE_BACKGROUND },
           };
-          setProfile({ uid: user.uid, ...defaults });
+          setProfile({ uid: user.uid, ...defaults, profileBackgroundUrl: "" });
           if (!profileInitialized) {
             profileInitialized = true;
             saveUserProfile(user.uid, defaults).catch((error) => reportCloudError("Could not initialize your profile", error));
           }
         }
-        markLoaded("profile");
+        if (!savedProfile) markLoaded("profile");
       }, (error) => loadFailed("profile", error)));
     }, (error) => {
       reportCloudError("Could not check your Firebase sign-in", error);
@@ -438,6 +465,7 @@ function App() {
     });
 
     return () => {
+      profileRequestVersion += 1;
       stopAuthListener();
       dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
     };
@@ -911,19 +939,77 @@ function App() {
       reportCloudError("Could not sign out", error);
     }
   }
-  async function saveProfile(updates) {
-    const updatedProfile = { ...profile, ...updates, name: updates.name.trim() };
+  async function saveProfile(updates, backgroundDraft, onSaveStage) {
+    const oldBackground = normalizeProfileBackground(profile?.profileBackground);
+    let uploadedStoragePath = "";
     try {
-      await updateFirebaseDisplayName(updatedProfile.name);
-      await saveUserProfile(currentUid(), updatedProfile);
+      const uid = currentUid();
+      let nextBackground = normalizeProfileBackground(backgroundDraft?.settings || oldBackground);
+      let profileBackgroundUrl = profile?.profileBackgroundUrl || "";
+
+      if (backgroundDraft?.blob) {
+        onSaveStage?.("Uploading background… 0%");
+        const uploaded = await uploadUserProfileBackground(uid, backgroundDraft.blob, (percent) => {
+          onSaveStage?.(`Uploading background… ${percent}%`);
+        });
+        uploadedStoragePath = uploaded.storagePath;
+        nextBackground = normalizeProfileBackground({ ...backgroundDraft.settings, storagePath: uploaded.storagePath });
+        profileBackgroundUrl = uploaded.url;
+      } else if (backgroundDraft) {
+        nextBackground = normalizeProfileBackground({
+          ...backgroundDraft.settings,
+          storagePath: backgroundDraft.remove ? null : oldBackground.storagePath,
+        });
+        if (backgroundDraft.remove) profileBackgroundUrl = "";
+      }
+
+      const updatedProfile = {
+        ...profile,
+        ...updates,
+        name: updates.name.trim(),
+        profileBackground: nextBackground,
+        profileBackgroundUrl,
+      };
+      const { profileBackgroundUrl: _profileBackgroundUrl, ...storedProfile } = updatedProfile;
+      onSaveStage?.("Saving profile to Firebase…");
+      await saveUserProfile(uid, storedProfile);
       setProfile(updatedProfile);
       setProfileEditorOpen(false);
       notify("Profile updated.");
+      updateFirebaseDisplayName(updatedProfile.name).catch((error) => {
+        console.warn("Profile details were saved, but the Firebase Auth display name could not be updated.", error);
+      });
+      if (oldBackground.storagePath && oldBackground.storagePath !== nextBackground.storagePath) {
+        deleteUserProfileBackground(uid, oldBackground.storagePath).catch((error) => console.warn("Could not remove the replaced profile background.", error));
+      }
       return "";
     } catch (error) {
-      reportCloudError("Could not update your profile", error);
-      return error?.message || "Could not update your profile.";
+      if (uploadedStoragePath) {
+        deleteUserProfileBackground(profile.uid, uploadedStoragePath).catch(() => {});
+      }
+      const message = error?.code?.startsWith("storage/") ? getProfileBackgroundErrorMessage(error) : error?.message || "Could not update your profile.";
+      const reportedError = message === error?.message ? error : new Error(message, { cause: error });
+      if (reportedError !== error && error?.code) reportedError.code = error.code;
+      reportCloudError("Could not update your profile", reportedError);
+      return message;
     }
+  }
+  async function uploadProfileAvatar(imageBlob, onProgress) {
+    currentUid();
+    return uploadProfileAvatarToCloudinary(imageBlob, onProgress);
+  }
+  async function saveProfileAvatar(asset) {
+    const uid = currentUid();
+    if (!asset?.secureUrl || !asset?.publicId) throw new Error("Cloudinary did not return a valid profile picture.");
+    await saveUserProfile(uid, { photoURL: asset.secureUrl, photoPublicId: asset.publicId, avatarUrl: null });
+    setProfile((current) => ({ ...current, photoURL: asset.secureUrl, photoPublicId: asset.publicId, avatarUrl: null }));
+    notify("Profile picture updated.");
+  }
+  async function removeProfileAvatar() {
+    const uid = currentUid();
+    await saveUserProfile(uid, { photoURL: null, photoPublicId: null, avatarUrl: null });
+    setProfile((current) => ({ ...current, photoURL: null, photoPublicId: null, avatarUrl: null }));
+    notify("Profile picture removed.");
   }
   async function updatePreference(updates) {
     const updatedProfile = { ...profile, ...updates };
@@ -1039,7 +1125,7 @@ function App() {
       </SidebarContent>
       <SidebarFooter className="study-sidebar-footer">
         <div className="study-tip"><span className="tip-icon">✦</span><strong>A little every day</strong><p>Small study sessions add up to big progress.</p><div className="tip-progress" role="progressbar" aria-label="Study library completed" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completion}><span style={{ width: `${completion}%` }} /></div><span className="tip-meta">{completion}% of your library covered</span></div>
-        <button type="button" className="profile profile-button" onClick={() => setProfileEditorOpen(true)} title="Edit profile" aria-label={`Edit profile for ${profile?.name || "Student"}`}><div className="avatar">{(profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Edit profile</span></div><span className="profile-dots">↗</span></button>
+        <button type="button" className="profile profile-button" onClick={() => setProfileEditorOpen(true)} title="Edit profile" aria-label={`Edit profile for ${profile?.name || "Student"}`}><div className="avatar">{profile?.photoURL || profile?.avatarUrl ? <img src={profile.photoURL || profile.avatarUrl} alt="" /> : (profile?.name || "S").slice(0, 1).toUpperCase()}</div><div><strong>{profile?.name || "Student"}</strong><span>Edit profile</span></div><span className="profile-dots">↗</span></button>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
@@ -1099,7 +1185,7 @@ function App() {
       </div>
     </SidebarInset>
     {toast && <div className="toast">✓ &nbsp;{toast}</div>}
-    {profileEditorOpen && profile && <ProfileEditor profile={profile} onSave={saveProfile} onClose={() => setProfileEditorOpen(false)} onLogout={logout} />}
+    {profileEditorOpen && profile && <ProfileEditor profile={profile} onSave={saveProfile} onUploadPhoto={uploadProfileAvatar} onSavePhoto={saveProfileAvatar} onRemovePhoto={removeProfileAvatar} onRequireAuth={currentUid} onClose={() => setProfileEditorOpen(false)} onLogout={logout} />}
     {!profile && <LoginScreen firebaseReady={firebaseConfigured} missingConfig={missingFirebaseConfig} authChoice={authChoice} onLogin={login} onGoogleLogin={googleLogin} onFinish={finishLogin} />}
   </SidebarProvider>;
 }
@@ -1200,10 +1286,11 @@ function CollapsedSidebarResizer({ width, onWidthChange }) {
   />;
 }
 
-function ProfileEditor({ profile, onSave, onClose, onLogout }) {
+function ProfileEditor({ profile, onSave, onUploadPhoto, onSavePhoto, onRemovePhoto, onRequireAuth, onClose, onLogout }) {
   const [form, setForm] = useState({
     name: profile.name || "",
     email: profile.email || "",
+    bio: profile.bio || "",
     contactEmail: profile.contactEmail || "",
     phone: profile.phone || "",
     school: profile.school || "",
@@ -1212,24 +1299,63 @@ function ProfileEditor({ profile, onSave, onClose, onLogout }) {
     yearLevelOther: profile.yearLevelOther || "",
     studyGoal: profile.studyGoal || "",
   });
+  const [backgroundDraft, setBackgroundDraft] = useState(() => ({
+    settings: normalizeProfileBackground(profile.profileBackground),
+    blob: null,
+    remove: false,
+  }));
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [saveStage, setSaveStage] = useState("");
+  const saveStageRef = useRef("");
+  const [preparingBackground, setPreparingBackground] = useState(false);
   const yearLevels = ["Grade 11", "Grade 12", "1st Year College", "2nd Year College", "3rd Year College", "4th Year College", "5th Year College", "6th Year College", "Graduate Student", "Other", "Prefer not to say"];
   const savedYearLevel = form.yearLevel && !yearLevels.includes(form.yearLevel) ? [form.yearLevel, ...yearLevels] : yearLevels;
   function set(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   async function submit(event) {
     event.preventDefault();
+    if (saving || preparingBackground || photoBusy) return;
     if (!form.name.trim()) { setError("Enter your name to save your profile."); return; }
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) { setError("Enter a valid contact email address."); return; }
+    if (!navigator.onLine) { setError("You appear to be offline. Reconnect, then save your profile again."); return; }
     setError("");
-    const message = await onSave(form);
-    if (message) setError(message);
+    setSaving(true);
+    saveStageRef.current = "Saving profile to Firebase…";
+    setSaveStage("Saving profile to Firebase…");
+    const saveWaitTimer = window.setTimeout(() => {
+      if (saveStageRef.current.startsWith("Uploading background")) {
+        saveStageRef.current = "Upload is slow…";
+        setSaveStage(saveStageRef.current);
+        setError("Firebase Storage has not confirmed the image upload. Check the bucket, Storage rules, and connection; the upload will retry for up to 60 seconds.");
+      } else {
+        saveStageRef.current = "Waiting for Firebase…";
+        setSaveStage(saveStageRef.current);
+        setError("Firebase has not confirmed the profile write. Check your connection and keep this dialog open while it retries.");
+      }
+    }, 15000);
+    try {
+      const message = await onSave(form, backgroundDraft, (stage) => {
+        saveStageRef.current = stage;
+        setSaveStage(stage);
+      });
+      if (message) setError(message);
+    } catch (saveError) {
+      setError(saveError.message || "Could not update your profile.");
+    } finally {
+      window.clearTimeout(saveWaitTimer);
+      setSaving(false);
+      saveStageRef.current = "";
+      setSaveStage("");
+    }
   }
-  return <div className="profile-modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  return <div className="profile-modal-overlay" onMouseDown={(event) => { if (!saving && !photoBusy && event.target === event.currentTarget) onClose(); }}>
     <section className="panel profile-editor" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
-      <div className="profile-editor-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2 id="profile-editor-title">Edit profile</h2><p>Update the details shown in your study space.</p></div><button type="button" className="icon-button" aria-label="Close edit profile" onClick={onClose}>×</button></div>
+      <div className="profile-editor-heading"><div><p className="eyebrow">YOUR ACCOUNT</p><h2 id="profile-editor-title">Edit profile</h2><p>Update the details shown in your study space.</p></div><button type="button" className="icon-button" aria-label="Close edit profile" disabled={saving || photoBusy} onClick={onClose}>×</button></div>
       <form onSubmit={submit}>
+        <ProfileAvatarEditor profile={{ ...profile, ...form }} onAuthenticate={onRequireAuth} onUpload={onUploadPhoto} onSavePhoto={onSavePhoto} onRemovePhoto={onRemovePhoto} onBusyChange={setPhotoBusy} />
         <div className="profile-form-grid">
-          <label>Display name<input autoFocus required value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="Your name" /></label>
+          <label>Display name<input autoFocus required maxLength="80" value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="Your name" /></label>
           <label>Sign-in email<input type="email" value={form.email} readOnly aria-describedby="profile-email-note" /></label>
           <label>Contact email<input type="email" value={form.contactEmail} onChange={(event) => set("contactEmail", event.target.value)} placeholder="name@example.com" /></label>
           <label>Phone number<input type="tel" value={form.phone} onChange={(event) => set("phone", event.target.value)} placeholder="Optional" /></label>
@@ -1247,11 +1373,13 @@ function ProfileEditor({ profile, onSave, onClose, onLogout }) {
             </Select>
             {form.yearLevel === "Other" && <label className="profile-year-level-other" htmlFor="profile-year-level-other">Please specify your year or level<input id="profile-year-level-other" value={form.yearLevelOther} onChange={(event) => set("yearLevelOther", event.target.value)} placeholder="Enter your year or level…" /></label>}
           </div>
+          <label className="profile-form-wide">Biography<textarea rows="2" maxLength="240" value={form.bio} onChange={(event) => set("bio", event.target.value)} placeholder="A short introduction for your profile (optional)" /></label>
           <label className="profile-form-wide">Study goal<textarea rows="3" value={form.studyGoal} onChange={(event) => set("studyGoal", event.target.value)} placeholder="What are you working toward? (Optional)" /></label>
         </div>
+        <ProfileBackgroundEditor profile={{ ...profile, ...form }} value={backgroundDraft} onChange={setBackgroundDraft} onPreparingChange={setPreparingBackground} />
         <small className="profile-email-note" id="profile-email-note">Your sign-in email stays linked to this account. Add a contact email above if you want to use a different address in your profile.</small>
         {error && <p className="profile-form-error" role="alert">{error}</p>}
-        <div className="profile-editor-actions"><button type="button" className="button text-button profile-sign-out" onClick={onLogout}>Sign out</button><div><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button type="submit" className="button primary">Save profile</button></div></div>
+        <div className="profile-editor-actions"><button type="button" className="button text-button profile-sign-out" disabled={saving || photoBusy} onClick={onLogout}>Sign out</button><div><button type="button" className="button secondary" disabled={saving || photoBusy} onClick={onClose}>Cancel changes</button><button type="submit" className="button primary" disabled={saving || preparingBackground || photoBusy}>{saving ? saveStage || "Saving…" : preparingBackground ? "Preparing image…" : photoBusy ? "Updating photo…" : "Save changes"}</button></div></div>
       </form>
     </section>
   </div>;
