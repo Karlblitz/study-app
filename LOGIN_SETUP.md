@@ -11,7 +11,6 @@ The app uses Firebase Authentication for account identity and Cloud Firestore fo
    VITE_FIREBASE_API_KEY=...
    VITE_FIREBASE_AUTH_DOMAIN=your-project-id.firebaseapp.com
    VITE_FIREBASE_PROJECT_ID=your-project-id
-   VITE_FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
    VITE_FIREBASE_MESSAGING_SENDER_ID=...
    VITE_FIREBASE_APP_ID=...
    ```
@@ -23,20 +22,13 @@ The app uses Firebase Authentication for account identity and Cloud Firestore fo
 
 These Firebase Web App values are client configuration, not service-account credentials. Do not put a Google client secret, Firebase Admin SDK key, or service-account JSON in the frontend or `.env.local`.
 
-## Enable profile background uploads
+## Configure Cloudinary profile images
 
-Profile banners use Firebase Storage separately from Firestore. In **Firebase Console → Databases & Storage → Storage**, create or select the project's bucket and copy its exact bucket name into `VITE_FIREBASE_STORAGE_BUCKET` in `.env.local`. Bucket names may end in `.firebasestorage.app` or `.appspot.com`; use the name shown in that project's Storage page.
+Set `VITE_CLOUDINARY_CLOUD_NAME` and `VITE_CLOUDINARY_UPLOAD_PRESET` in `.env.local`, then restart Vite. The preset name must match an **unsigned image upload preset** in Cloudinary. Configure it to allow JPG, JPEG, PNG, and WebP images up to 8 MB. Remove any forced incoming crop or square transformation: Studyspace crops profile pictures in the browser and prepares wide profile backgrounds separately.
 
-Open the bucket's **Rules** tab and publish the profile-background rules from [`storage.rules`](./storage.rules). If the project already has Storage rules for other data, merge the `match /users/{userId}/profile/backgrounds/{fileName}` block into the existing rules instead of replacing them. The rules only allow an authenticated user to access files under their own UID. Restart Vite after changing the bucket setting, then sign out and back in before trying the upload again.
+The app uploads both profile pictures and banners to `https://api.cloudinary.com/v1_1/<cloud-name>/image/upload` using the unsigned preset. Banner uploads show progress and save the returned secure URL and public ID with the banner position, zoom, brightness, overlay opacity, gradient, and blur settings in the signed-in user's existing `users/{uid}/profile/preferences` document. Banner source files are limited to 8 MB and are resized to WebP before upload. Removing a picture or banner clears its Firestore reference; it does not delete the Cloudinary asset.
 
-If the save reports `storage/unauthorized`, the deployed rules or signed-in account do not match the configured Firebase project. If it reports `storage/bucket-not-found`, check that the bucket exists and that its exact name is configured. New default Storage buckets may also require the Firebase project's billing plan to be upgraded; check the Storage setup prompt in Firebase Console.
-
-## Configure Cloudinary profile pictures
-
-Set `VITE_CLOUDINARY_CLOUD_NAME` in `.env.local` to the Cloudinary cloud name. `VITE_CLOUDINARY_UPLOAD_PRESET` defaults to `studyspace_avatars`. In Cloudinary, create an **unsigned** image upload preset with that name, restrict allowed formats to JPG, JPEG, PNG, and WebP, set the maximum file size to 2 MB, and apply a centered `c_fill` 256 × 256 incoming transformation. The app also crops selected images to 256 × 256 before upload and requests `f_auto,q_auto` for delivery.
-
-Unsigned presets are public and can be used outside this app. Keep the preset restricted by format, file size, and transformation; never add the Cloudinary API Secret to frontend environment variables. The app requires Firebase Authentication before it sends an upload and writes `photoURL` plus `photoPublicId` into the existing UID-protected profile document. Removing a photo clears those Firestore fields but does not delete the Cloudinary asset; deleting old assets should be handled by a trusted backend using a server-side secret.
-
+Unsigned presets are public and can be used outside this app. Restrict the preset by allowed formats and file size, and never add the Cloudinary API Secret to frontend environment variables. Profile image uploads require Firebase Authentication; Firestore rules continue to protect the profile document. Cloudinary hosting does not require Firebase Storage or a paid Firebase plan.
 ## Firestore layout
 
 - `users/{uid}/lectures/{lectureId}` — lecture fields, checklist completion, resource name/type metadata, notes, and question sets.

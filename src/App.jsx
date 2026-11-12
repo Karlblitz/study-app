@@ -36,11 +36,8 @@ import ProfileAvatarEditor from "./components/ProfileAvatarEditor.jsx";
 import { uploadProfileAvatarToCloudinary } from "./cloudinaryAvatar.js";
 import {
   DEFAULT_PROFILE_BACKGROUND,
-  deleteUserProfileBackground,
-  getProfileBackgroundErrorMessage,
-  getUserProfileBackgroundUrl,
   normalizeProfileBackground,
-  uploadUserProfileBackground,
+  uploadProfileBackgroundToCloudinary,
 } from "./profileBackground.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { Eye, EyeOff, FileText, FileVideo, X, Mail, LockKeyhole, ArrowRight, LoaderCircle, Star, Pencil, Trash2 } from "lucide-react";
@@ -328,15 +325,14 @@ function App() {
   const calendarPopover = useRef(null);
   const notificationsPopover = useRef(null);
   const quizGenerationLock = useRef(false);
+  const profileSaveInFlight = useRef(false);
   useEffect(() => {
     if (!firebaseConfigured || !auth) {
       setIsStarting(false);
       return;
     }
     let dataUnsubscribers = [];
-    let profileRequestVersion = 0;
     const stopAuthListener = onAuthStateChanged(auth, (user) => {
-      profileRequestVersion += 1;
       dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
       dataUnsubscribers = [];
       setLectures([]);
@@ -429,19 +425,9 @@ function App() {
             ...savedProfile,
             profileBackground: normalizeProfileBackground(savedProfile.profileBackground),
           };
-          const requestVersion = ++profileRequestVersion;
-          getUserProfileBackgroundUrl(user.uid, nextProfile.profileBackground.storagePath).then((profileBackgroundUrl) => {
-            if (requestVersion !== profileRequestVersion) return;
-            setProfile({ ...nextProfile, profileBackgroundUrl });
-            if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
-            markLoaded("profile");
-          }).catch((error) => {
-            if (requestVersion !== profileRequestVersion) return;
-            reportCloudError("Could not load your profile background", error);
-            setProfile({ ...nextProfile, profileBackgroundUrl: "" });
-            if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
-            markLoaded("profile");
-          });
+          setProfile({ ...nextProfile, profileBackgroundUrl: nextProfile.profileBackground.url || "" });
+          if (nextProfile.theme === "dark" || nextProfile.theme === "light") setTheme(nextProfile.theme);
+          markLoaded("profile");
         } else {
           const defaults = {
             name: user.displayName || user.email || "Student",
@@ -465,7 +451,6 @@ function App() {
     });
 
     return () => {
-      profileRequestVersion += 1;
       stopAuthListener();
       dataUnsubscribers.forEach((unsubscribe) => unsubscribe());
     };
@@ -939,28 +924,30 @@ function App() {
       reportCloudError("Could not sign out", error);
     }
   }
-  async function saveProfile(updates, backgroundDraft, onSaveStage) {
+  async function saveProfile(updates, backgroundDraft, onSaveStage, onBackgroundUploaded) {
+    if (profileSaveInFlight.current) return "A profile save is already in progress.";
+    profileSaveInFlight.current = true;
     const oldBackground = normalizeProfileBackground(profile?.profileBackground);
-    let uploadedStoragePath = "";
     try {
       const uid = currentUid();
       let nextBackground = normalizeProfileBackground(backgroundDraft?.settings || oldBackground);
-      let profileBackgroundUrl = profile?.profileBackgroundUrl || "";
 
       if (backgroundDraft?.blob) {
-        onSaveStage?.("Uploading background… 0%");
-        const uploaded = await uploadUserProfileBackground(uid, backgroundDraft.blob, (percent) => {
-          onSaveStage?.(`Uploading background… ${percent}%`);
-        });
-        uploadedStoragePath = uploaded.storagePath;
-        nextBackground = normalizeProfileBackground({ ...backgroundDraft.settings, storagePath: uploaded.storagePath });
-        profileBackgroundUrl = uploaded.url;
+        let uploaded = backgroundDraft.uploadedAsset;
+        if (!uploaded?.secureUrl || !uploaded?.publicId) {
+          onSaveStage?.("Uploading background… 0%");
+          uploaded = await uploadProfileBackgroundToCloudinary(uid, backgroundDraft.blob, (percent) => {
+            onSaveStage?.(`Uploading background… ${percent}%`);
+          });
+          onBackgroundUploaded?.(uploaded);
+        }
+        nextBackground = normalizeProfileBackground({ ...backgroundDraft.settings, url: uploaded.secureUrl, publicId: uploaded.publicId });
       } else if (backgroundDraft) {
         nextBackground = normalizeProfileBackground({
           ...backgroundDraft.settings,
-          storagePath: backgroundDraft.remove ? null : oldBackground.storagePath,
+          url: backgroundDraft.remove ? null : oldBackground.url,
+          publicId: backgroundDraft.remove ? null : oldBackground.publicId,
         });
-        if (backgroundDraft.remove) profileBackgroundUrl = "";
       }
 
       const updatedProfile = {
@@ -968,30 +955,23 @@ function App() {
         ...updates,
         name: updates.name.trim(),
         profileBackground: nextBackground,
-        profileBackgroundUrl,
+        profileBackgroundUrl: nextBackground.url || "",
       };
-      const { profileBackgroundUrl: _profileBackgroundUrl, ...storedProfile } = updatedProfile;
-      onSaveStage?.("Saving profile to Firebase…");
-      await saveUserProfile(uid, storedProfile);
+      const profileUpdates = { ...updates, name: updates.name.trim(), profileBackground: nextBackground };
+      onSaveStage?.("Saving profile to Firestore…");
+      await saveUserProfile(uid, profileUpdates);
       setProfile(updatedProfile);
       setProfileEditorOpen(false);
       notify("Profile updated.");
       updateFirebaseDisplayName(updatedProfile.name).catch((error) => {
         console.warn("Profile details were saved, but the Firebase Auth display name could not be updated.", error);
       });
-      if (oldBackground.storagePath && oldBackground.storagePath !== nextBackground.storagePath) {
-        deleteUserProfileBackground(uid, oldBackground.storagePath).catch((error) => console.warn("Could not remove the replaced profile background.", error));
-      }
       return "";
     } catch (error) {
-      if (uploadedStoragePath) {
-        deleteUserProfileBackground(profile.uid, uploadedStoragePath).catch(() => {});
-      }
-      const message = error?.code?.startsWith("storage/") ? getProfileBackgroundErrorMessage(error) : error?.message || "Could not update your profile.";
-      const reportedError = message === error?.message ? error : new Error(message, { cause: error });
-      if (reportedError !== error && error?.code) reportedError.code = error.code;
-      reportCloudError("Could not update your profile", reportedError);
-      return message;
+      reportCloudError("Could not update your profile", error);
+      return error?.message || "Could not update your profile.";
+    } finally {
+      profileSaveInFlight.current = false;
     }
   }
   async function uploadProfileAvatar(imageBlob, onProgress) {
@@ -1302,6 +1282,7 @@ function ProfileEditor({ profile, onSave, onUploadPhoto, onSavePhoto, onRemovePh
   const [backgroundDraft, setBackgroundDraft] = useState(() => ({
     settings: normalizeProfileBackground(profile.profileBackground),
     blob: null,
+    uploadedAsset: null,
     remove: false,
   }));
   const [error, setError] = useState("");
@@ -1309,41 +1290,49 @@ function ProfileEditor({ profile, onSave, onUploadPhoto, onSavePhoto, onRemovePh
   const [photoBusy, setPhotoBusy] = useState(false);
   const [saveStage, setSaveStage] = useState("");
   const saveStageRef = useRef("");
+  const submitInFlight = useRef(false);
   const [preparingBackground, setPreparingBackground] = useState(false);
   const yearLevels = ["Grade 11", "Grade 12", "1st Year College", "2nd Year College", "3rd Year College", "4th Year College", "5th Year College", "6th Year College", "Graduate Student", "Other", "Prefer not to say"];
   const savedYearLevel = form.yearLevel && !yearLevels.includes(form.yearLevel) ? [form.yearLevel, ...yearLevels] : yearLevels;
   function set(key, value) { setForm((current) => ({ ...current, [key]: value })); }
   async function submit(event) {
     event.preventDefault();
-    if (saving || preparingBackground || photoBusy) return;
+    if (submitInFlight.current || saving || preparingBackground || photoBusy) return;
     if (!form.name.trim()) { setError("Enter your name to save your profile."); return; }
     if (form.contactEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contactEmail)) { setError("Enter a valid contact email address."); return; }
     if (!navigator.onLine) { setError("You appear to be offline. Reconnect, then save your profile again."); return; }
     setError("");
+    submitInFlight.current = true;
     setSaving(true);
-    saveStageRef.current = "Saving profile to Firebase…";
-    setSaveStage("Saving profile to Firebase…");
+    saveStageRef.current = "Saving profile to Firestore…";
+    setSaveStage("Saving profile to Firestore…");
     const saveWaitTimer = window.setTimeout(() => {
       if (saveStageRef.current.startsWith("Uploading background")) {
         saveStageRef.current = "Upload is slow…";
         setSaveStage(saveStageRef.current);
-        setError("Firebase Storage has not confirmed the image upload. Check the bucket, Storage rules, and connection; the upload will retry for up to 60 seconds.");
+        setError("Cloudinary has not confirmed the image upload. Check the connection and unsigned upload preset, then retry.");
       } else {
         saveStageRef.current = "Waiting for Firebase…";
         setSaveStage(saveStageRef.current);
-        setError("Firebase has not confirmed the profile write. Check your connection and keep this dialog open while it retries.");
+        setError("Firestore has not confirmed the profile write. Check your connection and keep this dialog open while it retries.");
       }
     }, 15000);
     try {
       const message = await onSave(form, backgroundDraft, (stage) => {
+        setError("");
         saveStageRef.current = stage;
         setSaveStage(stage);
+      }, (asset) => {
+        setBackgroundDraft((current) => current.blob === backgroundDraft.blob
+          ? { ...current, uploadedAsset: asset }
+          : current);
       });
       if (message) setError(message);
     } catch (saveError) {
       setError(saveError.message || "Could not update your profile.");
     } finally {
       window.clearTimeout(saveWaitTimer);
+      submitInFlight.current = false;
       setSaving(false);
       saveStageRef.current = "";
       setSaveStage("");
@@ -1376,7 +1365,7 @@ function ProfileEditor({ profile, onSave, onUploadPhoto, onSavePhoto, onRemovePh
           <label className="profile-form-wide">Biography<textarea rows="2" maxLength="240" value={form.bio} onChange={(event) => set("bio", event.target.value)} placeholder="A short introduction for your profile (optional)" /></label>
           <label className="profile-form-wide">Study goal<textarea rows="3" value={form.studyGoal} onChange={(event) => set("studyGoal", event.target.value)} placeholder="What are you working toward? (Optional)" /></label>
         </div>
-        <ProfileBackgroundEditor profile={{ ...profile, ...form }} value={backgroundDraft} onChange={setBackgroundDraft} onPreparingChange={setPreparingBackground} />
+        <ProfileBackgroundEditor profile={{ ...profile, ...form }} value={backgroundDraft} onChange={setBackgroundDraft} onPreparingChange={setPreparingBackground} disabled={saving} />
         <small className="profile-email-note" id="profile-email-note">Your sign-in email stays linked to this account. Add a contact email above if you want to use a different address in your profile.</small>
         {error && <p className="profile-form-error" role="alert">{error}</p>}
         <div className="profile-editor-actions"><button type="button" className="button text-button profile-sign-out" disabled={saving || photoBusy} onClick={onLogout}>Sign out</button><div><button type="button" className="button secondary" disabled={saving || photoBusy} onClick={onClose}>Cancel changes</button><button type="submit" className="button primary" disabled={saving || preparingBackground || photoBusy}>{saving ? saveStage || "Saving…" : preparingBackground ? "Preparing image…" : photoBusy ? "Updating photo…" : "Save changes"}</button></div></div>

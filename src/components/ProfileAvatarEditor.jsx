@@ -141,7 +141,7 @@ export default function ProfileAvatarEditor({ profile, onAuthenticate, onUpload,
       </div>
     </div>
     {status === "Uploading to Cloudinary" && <div className="profile-avatar-progress" role="progressbar" aria-label="Profile picture upload progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>}
-    {!CLOUDINARY_AVATAR_CONFIGURED && <p className="profile-avatar-error" role="alert">Cloudinary is not configured. Set VITE_CLOUDINARY_CLOUD_NAME and restart the app.</p>}
+    {!CLOUDINARY_AVATAR_CONFIGURED && <p className="profile-avatar-error" role="alert">Cloudinary is not configured. Set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET, then restart the app.</p>}
     {error && (CLOUDINARY_AVATAR_CONFIGURED || !error.includes("Cloudinary is not configured")) && <p className="profile-avatar-error" role="alert">{error}</p>}
     {success && <p className="profile-avatar-success" role="status">{success}</p>}
   </section>;

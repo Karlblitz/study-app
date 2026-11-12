@@ -1,9 +1,8 @@
-import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from "firebase/storage";
-import { storage } from "./firebase.js";
+import { uploadImageToCloudinary } from "./cloudinaryAvatar.js";
 
-const profileBackgroundLimit = Number(import.meta.env.VITE_PROFILE_BACKGROUND_MAX_UPLOAD_MB);
-export const PROFILE_BACKGROUND_MAX_UPLOAD_MB = Number.isFinite(profileBackgroundLimit) && profileBackgroundLimit > 0
-  ? Math.min(profileBackgroundLimit, 32)
+const configuredLimit = Number(import.meta.env.VITE_PROFILE_BACKGROUND_MAX_UPLOAD_MB);
+export const PROFILE_BACKGROUND_MAX_UPLOAD_MB = Number.isFinite(configuredLimit) && configuredLimit > 0
+  ? Math.min(configuredLimit, 8)
   : 8;
 
 const MAX_STORED_BYTES = 900 * 1024;
@@ -18,7 +17,8 @@ const supportedImageTypes = new Map([
 ]);
 
 export const DEFAULT_PROFILE_BACKGROUND = Object.freeze({
-  storagePath: null,
+  url: null,
+  publicId: null,
   position: "center",
   zoom: 100,
   brightness: 100,
@@ -36,7 +36,8 @@ export function normalizeProfileBackground(value = {}) {
   value ||= {};
   const position = ["left", "center", "right"].includes(value.position) ? value.position : "center";
   return {
-    storagePath: typeof value.storagePath === "string" && value.storagePath ? value.storagePath : null,
+    url: typeof value.url === "string" && value.url.startsWith("https://") ? value.url : null,
+    publicId: typeof value.publicId === "string" && value.publicId ? value.publicId : null,
     position,
     zoom: clamp(value.zoom, 100, 180, DEFAULT_PROFILE_BACKGROUND.zoom),
     brightness: clamp(value.brightness, 60, 140, DEFAULT_PROFILE_BACKGROUND.brightness),
@@ -44,24 +45,6 @@ export function normalizeProfileBackground(value = {}) {
     gradient: typeof value.gradient === "boolean" ? value.gradient : DEFAULT_PROFILE_BACKGROUND.gradient,
     blur: Boolean(value.blur),
   };
-}
-
-export function getProfileBackgroundErrorMessage(error) {
-  switch (error?.code) {
-    case "storage/unauthorized":
-      return "Firebase Storage denied this upload. Publish the rules in storage.rules to the configured bucket and confirm you are signed in to the same Firebase project.";
-    case "storage/bucket-not-found":
-    case "storage/no-default-bucket":
-      return "The configured Firebase Storage bucket was not found. Create a Storage bucket and set VITE_FIREBASE_STORAGE_BUCKET to its exact name, then restart the app.";
-    case "storage/project-not-found":
-      return "Firebase Storage is not enabled for the configured project. Create a Storage bucket in Firebase Console, then restart the app.";
-    case "storage/unauthenticated":
-      return "Your Firebase session expired. Sign out and sign back in before saving the background.";
-    case "storage/retry-limit-exceeded":
-      return "The image upload timed out. Check your connection and try again.";
-    default:
-      return error?.message || "Could not upload the profile background.";
-  }
 }
 
 function imageTypeFor(file) {
@@ -87,7 +70,7 @@ export async function prepareProfileBackground(file) {
   imageTypeFor(file);
   const sourceLimit = PROFILE_BACKGROUND_MAX_UPLOAD_MB * 1024 * 1024;
   if (file.size > sourceLimit) {
-    throw new Error(`Choose an image smaller than ${PROFILE_BACKGROUND_MAX_UPLOAD_MB} MB.`);
+    throw new Error(`Choose an image no larger than ${PROFILE_BACKGROUND_MAX_UPLOAD_MB} MB.`);
   }
   if (typeof createImageBitmap !== "function") {
     throw new Error("This browser cannot resize images. Try a current version of Chrome, Edge, or Firefox.");
@@ -122,7 +105,7 @@ export async function prepareProfileBackground(file) {
       width = Math.max(1, Math.round(width * 0.82));
       height = Math.max(1, Math.round(height * 0.82));
     }
-    throw new Error("This image could not be reduced below the 900 KB storage limit. Choose a simpler image.");
+    throw new Error("This image could not be reduced below the 900 KB upload limit. Choose a simpler image.");
   } catch (error) {
     if (error instanceof Error && error.message) throw error;
     throw new Error("This image could not be opened. Choose a valid JPG, PNG, or WebP file.");
@@ -131,53 +114,10 @@ export async function prepareProfileBackground(file) {
   }
 }
 
-function userBackgroundReference(uid, storagePath) {
-  if (!storage || !uid) throw new Error("Sign in before updating your profile background.");
-  if (typeof storagePath !== "string" || !storagePath.startsWith(`users/${uid}/profile/backgrounds/`)) {
-    throw new Error("This profile background does not belong to the signed-in user.");
-  }
-  return ref(storage, storagePath);
-}
-
-export async function uploadUserProfileBackground(uid, imageBlob, onProgress) {
-  if (!storage || !uid) throw new Error("Firebase Storage is unavailable. Check the Firebase storage bucket configuration.");
+export async function uploadProfileBackgroundToCloudinary(uid, imageBlob, onProgress) {
+  if (!uid) throw new Error("Sign in before updating your profile background.");
   if (!(imageBlob instanceof Blob) || imageBlob.type !== "image/webp" || imageBlob.size > MAX_STORED_BYTES) {
-    throw new Error("The prepared profile background is invalid or exceeds the 900 KB limit.");
+    throw new Error("The prepared profile background is invalid or exceeds the 900 KB upload limit.");
   }
-
-  const storagePath = `users/${uid}/profile/backgrounds/${crypto.randomUUID()}.webp`;
-  const imageRef = userBackgroundReference(uid, storagePath);
-  let uploaded = false;
-  try {
-    storage.maxUploadRetryTime = 60_000;
-    const uploadTask = uploadBytesResumable(imageRef, imageBlob, {
-      contentType: "image/webp",
-      cacheControl: "private, max-age=3600",
-    });
-    await new Promise((resolve, reject) => {
-      uploadTask.on("state_changed", (snapshot) => {
-        const percent = snapshot.totalBytes ? Math.round(snapshot.bytesTransferred / snapshot.totalBytes * 100) : 0;
-        onProgress?.(percent);
-      }, reject, resolve);
-    });
-    uploaded = true;
-    return { storagePath, url: await getDownloadURL(imageRef) };
-  } catch (error) {
-    if (uploaded) await deleteObject(imageRef).catch(() => {});
-    throw error;
-  }
-}
-
-export async function getUserProfileBackgroundUrl(uid, storagePath) {
-  if (!storagePath) return "";
-  return getDownloadURL(userBackgroundReference(uid, storagePath));
-}
-
-export async function deleteUserProfileBackground(uid, storagePath) {
-  if (!storagePath) return;
-  try {
-    await deleteObject(userBackgroundReference(uid, storagePath));
-  } catch (error) {
-    if (error?.code !== "storage/object-not-found") throw error;
-  }
+  return uploadImageToCloudinary(imageBlob, "studyspace-background.webp", onProgress);
 }

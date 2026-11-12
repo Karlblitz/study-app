@@ -1,8 +1,10 @@
 const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME?.trim() || "";
-export const CLOUDINARY_AVATAR_CONFIGURED = Boolean(cloudName);
-export const CLOUDINARY_AVATAR_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET?.trim() || "studyspace_avatars";
+export const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET?.trim() || "";
+export const CLOUDINARY_AVATAR_CONFIGURED = Boolean(cloudName && CLOUDINARY_UPLOAD_PRESET);
+export const CLOUDINARY_AVATAR_UPLOAD_PRESET = CLOUDINARY_UPLOAD_PRESET;
 
 const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+const MAX_CLOUDINARY_BYTES = 8 * 1024 * 1024;
 const MAX_DECODED_PIXELS = 36_000_000;
 const AVATAR_SIZE = 256;
 const avatarTypes = new Map([
@@ -64,30 +66,33 @@ export async function prepareProfileAvatar(file) {
   }
 }
 
-function optimizedDeliveryUrl(secureUrl) {
+export function optimizedCloudinaryDeliveryUrl(secureUrl) {
   return secureUrl.replace("/image/upload/", "/image/upload/f_auto,q_auto/");
 }
 
-export async function uploadProfileAvatarToCloudinary(imageBlob, onProgress) {
+export function uploadImageToCloudinary(imageBlob, fileName, onProgress) {
   if (!cloudName) throw new Error("Cloudinary is not configured. Set VITE_CLOUDINARY_CLOUD_NAME and restart the app.");
-  if (!CLOUDINARY_AVATAR_UPLOAD_PRESET) throw new Error("Set VITE_CLOUDINARY_UPLOAD_PRESET to the unsigned studyspace_avatars preset.");
-  if (!(imageBlob instanceof Blob) || imageBlob.type !== "image/webp" || imageBlob.size > MAX_SOURCE_BYTES) {
-    throw new Error("The prepared profile picture is invalid or exceeds the 2 MB limit.");
+  if (!CLOUDINARY_UPLOAD_PRESET) throw new Error("Cloudinary is not configured. Set VITE_CLOUDINARY_UPLOAD_PRESET to the unsigned Studyspace preset and restart the app.");
+  if (!(imageBlob instanceof Blob) || !["image/jpeg", "image/png", "image/webp"].includes(imageBlob.type) || imageBlob.size > MAX_CLOUDINARY_BYTES) {
+    throw new Error("The prepared image is invalid or exceeds the 8 MB Cloudinary limit.");
   }
 
   const formData = new FormData();
-  formData.append("file", imageBlob, "studyspace-avatar.webp");
-  formData.append("upload_preset", CLOUDINARY_AVATAR_UPLOAD_PRESET);
+  formData.append("file", imageBlob, fileName || "studyspace-image.webp");
+  formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
 
   const endpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/upload`;
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
     request.open("POST", endpoint);
     request.responseType = "text";
+    request.timeout = 60_000;
     request.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+      const total = event.lengthComputable && event.total > 0 ? event.total : imageBlob.size;
+      if (total > 0 && event.loaded > 0) onProgress?.(Math.min(99, Math.floor((event.loaded / total) * 100)));
     });
     request.addEventListener("error", () => reject(new Error("Could not reach Cloudinary. Check your connection and try again.")));
+    request.addEventListener("timeout", () => reject(new Error("Cloudinary did not finish the upload within 60 seconds. Check your connection and retry.")));
     request.addEventListener("abort", () => reject(new Error("The Cloudinary upload was canceled.")));
     request.addEventListener("load", () => {
       let response = null;
@@ -100,8 +105,17 @@ export async function uploadProfileAvatarToCloudinary(imageBlob, onProgress) {
         reject(new Error("Cloudinary uploaded the file but did not return a secure URL and public ID."));
         return;
       }
-      resolve({ secureUrl: optimizedDeliveryUrl(response.secure_url), publicId: response.public_id });
+      onProgress?.(100);
+      resolve({ secureUrl: response.secure_url, publicId: response.public_id });
     });
     request.send(formData);
   });
+}
+
+export async function uploadProfileAvatarToCloudinary(imageBlob, onProgress) {
+  if (!(imageBlob instanceof Blob) || imageBlob.type !== "image/webp" || imageBlob.size > MAX_SOURCE_BYTES) {
+    throw new Error("The prepared profile picture is invalid or exceeds the 2 MB limit.");
+  }
+  const asset = await uploadImageToCloudinary(imageBlob, "studyspace-avatar.webp", onProgress);
+  return { ...asset, secureUrl: optimizedCloudinaryDeliveryUrl(asset.secureUrl) };
 }

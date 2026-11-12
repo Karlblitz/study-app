@@ -8,7 +8,7 @@ import {
   PROFILE_BACKGROUND_MAX_UPLOAD_MB,
 } from "../profileBackground.js";
 
-export default function ProfileBackgroundEditor({ profile, value, onChange, onPreparingChange }) {
+export default function ProfileBackgroundEditor({ profile, value, onChange, onPreparingChange, disabled = false }) {
   const [previewUrl, setPreviewUrl] = useState(profile.profileBackgroundUrl || "");
   const [previewMode, setPreviewMode] = useState("desktop");
   const [dragging, setDragging] = useState(false);
@@ -17,7 +17,7 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
   const fileInput = useRef(null);
   const settings = normalizeProfileBackground(value.settings);
   const savedBackground = profile.profileBackground || DEFAULT_PROFILE_BACKGROUND;
-  const hasCustomBackground = Boolean(value.blob || (!value.remove && savedBackground.storagePath));
+  const hasCustomBackground = Boolean(value.blob || (!value.remove && savedBackground.url));
 
   useEffect(() => {
     if (value.blob) {
@@ -29,13 +29,13 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
   }, [value.blob, value.remove, profile.profileBackgroundUrl]);
 
   async function chooseFile(file) {
-    if (!file) return;
+    if (disabled || !file) return;
     setError("");
     setPreparing(true);
     onPreparingChange(true);
     try {
       const blob = await prepareProfileBackground(file);
-      onChange((current) => ({ ...current, blob, remove: false }));
+      onChange((current) => ({ ...current, blob, uploadedAsset: null, remove: false }));
     } catch (fileError) {
       setError(fileError.message || "This image could not be used.");
     } finally {
@@ -46,6 +46,7 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
   }
 
   function changeSetting(key, nextValue) {
+    if (disabled) return;
     onChange((current) => ({
       ...current,
       settings: normalizeProfileBackground({ ...current.settings, [key]: nextValue }),
@@ -53,16 +54,19 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
   }
 
   function removeBackground() {
-    onChange((current) => ({ ...current, blob: null, remove: true }));
+    if (disabled) return;
+    onChange((current) => ({ ...current, blob: null, uploadedAsset: null, remove: true }));
     setError("");
   }
 
   function restoreDefault() {
+    if (disabled) return;
     onChange((current) => ({
       ...current,
       settings: { ...DEFAULT_PROFILE_BACKGROUND },
       blob: null,
-      remove: Boolean(savedBackground.storagePath),
+      uploadedAsset: null,
+      remove: Boolean(savedBackground.url),
     }));
     setError("");
   }
@@ -70,6 +74,7 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
   function handleDrop(event) {
     event.preventDefault();
     setDragging(false);
+    if (disabled) return;
     chooseFile(event.dataTransfer.files?.[0]);
   }
 
@@ -93,13 +98,13 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
     </div>
 
     <div className={`profile-background-dropzone${dragging ? " is-dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={handleDrop}>
-      <input ref={fileInput} className="profile-background-file-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={(event) => chooseFile(event.target.files?.[0])} />
+      <input ref={fileInput} className="profile-background-file-input" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" disabled={disabled} onChange={(event) => chooseFile(event.target.files?.[0])} />
       <span className="profile-background-upload-icon"><ImagePlus size={20} /></span>
       <div className="profile-background-upload-copy">
         <strong>{hasCustomBackground ? "Replace your background" : "Add a profile background"}</strong>
         <span>Drop an image here or choose one. JPG, JPEG, PNG, and WebP · up to {PROFILE_BACKGROUND_MAX_UPLOAD_MB} MB before optimization.</span>
       </div>
-      <button type="button" className="button secondary profile-background-choose" disabled={preparing} onClick={() => fileInput.current?.click()}>
+      <button type="button" className="button secondary profile-background-choose" disabled={disabled || preparing} onClick={() => fileInput.current?.click()}>
         <Upload size={15} /> {preparing ? "Preparing…" : hasCustomBackground ? "Replace image" : "Choose image"}
       </button>
     </div>
@@ -107,32 +112,32 @@ export default function ProfileBackgroundEditor({ profile, value, onChange, onPr
     <div className="profile-background-management">
       <span>{value.blob ? "New image ready to save" : hasCustomBackground ? "Your saved image stays unchanged until you save" : "Using the default background"}</span>
       <div>
-        <button type="button" className="profile-background-text-button" disabled={!hasCustomBackground} onClick={removeBackground}><Trash2 size={14} /> Remove background</button>
-        <button type="button" className="profile-background-text-button" onClick={restoreDefault}><RotateCcw size={14} /> Restore default</button>
+        <button type="button" className="profile-background-text-button" disabled={disabled || !hasCustomBackground} onClick={removeBackground}><Trash2 size={14} /> Remove background</button>
+        <button type="button" className="profile-background-text-button" disabled={disabled} onClick={restoreDefault}><RotateCcw size={14} /> Restore default</button>
       </div>
     </div>
 
     <div className="profile-background-controls">
       <label className="profile-background-control">
         <span><strong>Image position</strong><small>Choose which part of the banner stays in view.</small></span>
-        <select value={settings.position} onChange={(event) => changeSetting("position", event.target.value)}>
+        <select value={settings.position} disabled={disabled} onChange={(event) => changeSetting("position", event.target.value)}>
           <option value="left">Left</option><option value="center">Center</option><option value="right">Right</option>
         </select>
       </label>
       <label className="profile-background-control profile-background-range">
         <span><strong>Zoom</strong><output>{settings.zoom}%</output></span>
-        <input type="range" min="100" max="180" step="1" value={settings.zoom} onChange={(event) => changeSetting("zoom", Number(event.target.value))} aria-label="Background zoom" />
+        <input type="range" min="100" max="180" step="1" value={settings.zoom} disabled={disabled} onChange={(event) => changeSetting("zoom", Number(event.target.value))} aria-label="Background zoom" />
       </label>
       <label className="profile-background-control profile-background-range">
         <span><strong>Brightness</strong><output>{settings.brightness}%</output></span>
-        <input type="range" min="60" max="140" step="1" value={settings.brightness} onChange={(event) => changeSetting("brightness", Number(event.target.value))} aria-label="Background brightness" />
+        <input type="range" min="60" max="140" step="1" value={settings.brightness} disabled={disabled} onChange={(event) => changeSetting("brightness", Number(event.target.value))} aria-label="Background brightness" />
       </label>
       <label className="profile-background-control profile-background-range">
         <span><strong>Overlay opacity</strong><output>{settings.overlayOpacity}%</output></span>
-        <input type="range" min="0" max="80" step="1" value={settings.overlayOpacity} onChange={(event) => changeSetting("overlayOpacity", Number(event.target.value))} aria-label="Overlay opacity" />
+        <input type="range" min="0" max="80" step="1" value={settings.overlayOpacity} disabled={disabled} onChange={(event) => changeSetting("overlayOpacity", Number(event.target.value))} aria-label="Overlay opacity" />
       </label>
-      <label className="profile-background-toggle"><input type="checkbox" checked={settings.gradient} onChange={(event) => changeSetting("gradient", event.target.checked)} /><span><strong>Gradient overlay</strong><small>Add extra contrast behind profile details.</small></span></label>
-      <label className="profile-background-toggle"><input type="checkbox" checked={settings.blur} onChange={(event) => changeSetting("blur", event.target.checked)} /><span><strong>Blur background</strong><small>Soften busy images behind your profile.</small></span></label>
+      <label className="profile-background-toggle"><input type="checkbox" checked={settings.gradient} disabled={disabled} onChange={(event) => changeSetting("gradient", event.target.checked)} /><span><strong>Gradient overlay</strong><small>Add extra contrast behind profile details.</small></span></label>
+      <label className="profile-background-toggle"><input type="checkbox" checked={settings.blur} disabled={disabled} onChange={(event) => changeSetting("blur", event.target.checked)} /><span><strong>Blur background</strong><small>Soften busy images behind your profile.</small></span></label>
     </div>
   </section>;
 }

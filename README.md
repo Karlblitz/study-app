@@ -1,6 +1,6 @@
 # Studyspace — Personal Study Planner
 
-Studyspace is a responsive React app for organizing lecture materials, planning study sessions, taking quizzes, and tracking progress. Firebase Authentication and Cloud Firestore store each signed-in user's study data in that user's UID-scoped records; Cloudinary hosts profile pictures and Firebase Storage holds the separate wide profile banners.
+Studyspace is a responsive React app for organizing lecture materials, planning study sessions, taking quizzes, and tracking progress. Firebase Authentication and Cloud Firestore store each signed-in user's study data in that user's UID-scoped records; Cloudinary hosts profile pictures and wide profile banners.
 
 ## Features
 
@@ -18,7 +18,7 @@ Studyspace is a responsive React app for organizing lecture materials, planning 
 - **Math summaries:** render inline equations in generated summaries.
 - **Responsive layout:** the main study tools reflow for narrow mobile screens and wide desktop screens.
 - **Sign-in screen:** Firebase Email/Password and Google sign-in.
-- **Profile customization:** upload a Cloudinary-hosted profile picture and set a wide profile banner, preview desktop and mobile layouts, adjust crop, brightness, blur, and overlays, and save the banner to the signed-in user's Firebase Storage path.
+- **Profile customization:** upload Cloudinary-hosted profile pictures and wide profile banners, preview desktop and mobile layouts, adjust crop, brightness, blur, and overlays, and save the image URLs and display settings to the signed-in user's Firestore profile.
 
 ## Requirements
 
@@ -86,9 +86,9 @@ Files up to 3 MB can be retained for an in-app preview. Larger non-video documen
 
 ## Sign-in and data storage
 
-Copy `.env.example` to `.env.local`, fill in the Firebase Web App configuration values and `VITE_CLOUDINARY_CLOUD_NAME`, and restart Vite. `VITE_CLOUDINARY_UPLOAD_PRESET` defaults to `studyspace_avatars`; `VITE_PROFILE_BACKGROUND_MAX_UPLOAD_MB` sets the maximum profile banner source size before optimization (8 MB by default, capped at 32 MB). In Firebase Console, enable Email/Password and Google under **Authentication → Sign-in method**, create a Firestore database and Storage bucket, and publish the rules referenced by [firebase.json](./firebase.json). Configure the Cloudinary preset as unsigned and restrict it to JPG, JPEG, PNG, and WebP images up to 2 MB with a centered 256 × 256 crop. The frontend uses Firebase's modular JavaScript SDK; no Admin SDK, Cloudinary API Secret, or other private key belongs in the browser.
+Copy `.env.example` to `.env.local`, fill in the Firebase Web App configuration values and `VITE_CLOUDINARY_CLOUD_NAME` plus `VITE_CLOUDINARY_UPLOAD_PRESET`, and restart Vite. In Firebase Console, enable Email/Password and Google under **Authentication → Sign-in method**, create a Firestore database, and publish the Firestore rules referenced by [firebase.json](./firebase.json). Configure the Cloudinary upload preset as unsigned, allow JPG, JPEG, PNG, and WebP images up to 8 MB, and remove any forced incoming square crop so wide banners keep their shape. The app prepares avatar crops and banner sizes in the browser. The frontend uses Firebase's modular JavaScript SDK; no Admin SDK, Cloudinary API Secret, or other private key belongs in the browser.
 
-Data is stored in UID-scoped collections under `users/{uid}`: `lectures`, `sessions`, `quizzes`, `quizAttempts`, `plannerTasks`, `flashcards`, `focusSessions`, and `achievements`; profile preferences use `users/{uid}/profile/preferences`. Profile pictures store the Cloudinary `photoURL` and `photoPublicId` in that existing profile document. Profile backgrounds are compressed to WebP, stored under `users/{uid}/profile/backgrounds/`, and referenced from the profile document along with their display settings. Storage rules limit banner uploads to the signed-in user's path and WebP images under 1 MB. Checklist completion is the `studied` field on each material. Analytics are calculated from saved materials, attempts, completed sessions, and focus sessions. Firestore listeners keep the UI current when the signed-in user's data changes. Publish the Firestore and Storage rules before using the app.
+Data is stored in UID-scoped collections under `users/{uid}`: `lectures`, `sessions`, `quizzes`, `quizAttempts`, `plannerTasks`, `flashcards`, `focusSessions`, and `achievements`; profile preferences use `users/{uid}/profile/preferences`. Profile pictures store the Cloudinary `photoURL` and `photoPublicId`; profile backgrounds store their Cloudinary secure URL, public ID, and display settings in that same profile document. Background source images are limited to 8 MB and prepared as WebP before upload. Checklist completion is the `studied` field on each material. Analytics are calculated from saved materials, attempts, completed sessions, and focus sessions. Firestore listeners keep the UI current when the signed-in user's data changes. Publish the Firestore rules before using the app.
 
 Uploaded file names and types, extracted lecture text, and manually edited question banks are stored with the lecture. Generated quiz records include the complete configured questions, answer choices, answers, hints, and explanations in the user's `quizzes` collection. Original file bytes are not uploaded to Firestore: local preview data remains on the current browser/device, so reattach a file on another device if you need to preview or download it there. Existing local account and study-data entries are left untouched and are not automatically imported into Firebase. Legacy local accounts must register again with Firebase Authentication.
 
